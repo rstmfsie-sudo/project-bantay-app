@@ -55,13 +55,15 @@ function Boot({ onDone }: { onDone: () => void }) {
       await wait(250);
       set(1, { label: "Looking for the LiDAR", state: "run" });
       // give the driver a moment to open the port and receive a revolution
-      for (let i = 0; i < 8 && s!.lidar.state !== "scanning" && s!.source !== "replay"; i++) { await wait(500); s = await api<Status>("/api/status"); }
+      for (let i = 0; i < 8 && s!.lidar.state !== "scanning" && s!.source === "serial"; i++) { await wait(500); s = await api<Status>("/api/status"); }
       const l = s!.lidar;
-      set(1, s!.source === "replay"
+      set(1, s!.source === "simulation"
+        ? { label: "Simulation mode", state: "warn", msg: "Pretend traffic from the digital twin. No LiDAR needed." }
+        : s!.source === "replay"
         ? { label: "Playing a recording", state: "warn", msg: "You're watching saved data, not the live sensor" }
         : l.state === "scanning"
           ? { label: "LiDAR found and spinning", state: "ok", msg: `${l.port} · ${l.freq_measured?.toFixed(1) ?? "?"} turns per second` }
-          : { label: "LiDAR not found yet", state: "warn", msg: "You can still look around. Plug it in anytime." });
+          : { label: "LiDAR not found yet", state: "warn", msg: "Everything else works. Plug it in anytime, or try Simulation in Live Scan." });
       await wait(250);
       set(2, { label: "Preparing the view", state: "run" });
       const ok2d = !!document.createElement("canvas").getContext("2d");
@@ -171,6 +173,7 @@ export default function App() {
                   title={live.alert.S ? `Heads up: ${live.alert.reasons.join(", ")}` : "All clear"}
                   aria-label={live.alert.S === 2 ? "Warning: something is very close" : live.alert.S === 1 ? "Caution: something is near" : "All clear"} />
                 {s?.source === "replay" && <span className="chip accent">REPLAY · recorded data</span>}
+                {s?.source === "simulation" && <span className="chip accent">SIMULATION</span>}
                 {s?.recording && <span className="chip accent"><span className="dot bad pulse" /> REC</span>}
                 <span className="chip"><span className={`dot ${st.cls} ${st.cls === "ok" ? "pulse" : ""}`} /> {st.label}</span>
               </div>

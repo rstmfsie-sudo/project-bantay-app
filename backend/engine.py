@@ -17,7 +17,7 @@ from .config import DATA, Config
 from .db import DB
 from .pointnet import PointNetClassifier
 from .rangefinders import RangefinderLink
-from .twin import TwinModel
+from .twin import SimulationThread, TwinModel
 from .processing import Background, process
 from .tracking import Tracker
 from .ydlidar import LidarDriver, Scan
@@ -46,9 +46,11 @@ class Engine:
         self.follow: dict[int, list] = {}
         self.reset_tracking = False   # set by replay seek; applied on the processing thread
         self.closing_in: float | None = None   # countdown shown in the UI before auto-exit
+        self._was_sim = False
         self.on_exit = None                    # set by the desktop app to close its window
         self._rec_file = None
         self.replay = ReplayThread(self)
+        self.sim = SimulationThread(self)
         self.driver = LidarDriver(self.cfg.get, self.on_scan)
         self.rf = RangefinderLink(self.cfg.get)
         self.alert = {"L": 0, "R": 0, "S": 0, "reasons": []}
@@ -65,6 +67,7 @@ class Engine:
         self.rf.start()
         self.driver.start()
         self.replay.start()
+        self.sim.start()
 
     # ------------------------------------------------------------ acquisition side
     def on_scan(self, scan: Scan):
@@ -101,13 +104,16 @@ class Engine:
         t0 = time.perf_counter()
         cfg = self.cfg.get()
         replay = cfg["source"] == "replay"
+        sim = cfg["source"] == "simulation"
+        if sim != self._was_sim:            # switching to/from simulation: start tracking and background fresh
+            self._was_sim, self.reset_tracking = sim, True
         if self.reset_tracking:
             self.reset_tracking = False
             self.tracker.reset()
             self.follow.clear()
             self.bg.reset()
-        if not replay:
-            self._record(scan, cfg)   # never re-record a replay
+        if not (replay or sim):
+            self._record(scan, cfg)   # never re-record a replay, never record simulation
         frame, clusters = process(scan, cfg, self.bg)
         tracks = []
         use_ml = cfg["classifier"] == "ml" and self.ml.available
@@ -130,9 +136,10 @@ class Engine:
             d.update(category=tr.category, method=tr.method, confidence=tr.confidence, note=tr.note)
             tracks.append(d)
             self._count(tr)
-            self._follow_capture(tr, d, scan.t, frame_source=cfg["source"])
+            if not sim:                     # simulated objects never enter the real dataset
+                self._follow_capture(tr, d, scan.t, frame_source=cfg["source"])
             # history holds live sessions only: replaying a file twice must not duplicate rows
-            if not replay and scan.t - tr.last_logged >= cfg["log_interval_s"]:
+            if not (replay or sim) and scan.t - tr.last_logged >= cfg["log_interval_s"]:
                 tr.last_logged = scan.t
                 self.db.add_detection({
                     "ts": scan.t, "track_id": tr.id, "category": tr.category, "method": tr.method,
@@ -147,7 +154,7 @@ class Engine:
             else 0.9 * self.proc_ms + 0.1 * (time.perf_counter() - t0) * 1000
         frame.update(t=scan.t, t_wall=time.time(), clusters=[{k: c[k] for k in ("id", "xmin", "ymin", "xmax", "ymax", "cx", "cy")}
                                          for c in clusters], tracks=tracks,
-                     source="replay" if replay else "serial",
+                     source="simulation" if sim else "replay" if replay else "serial",
                      replay=self.replay.state() if replay else None)
         self.frame = frame
         self.seq += 1
@@ -260,6 +267,8 @@ class Engine:
 
     def label_track(self, track_id: int, label: str, notes="", follow=False):
         frame = self.frame or {}
+        if frame.get("source") == "simulation":
+            raise ValueError("Simulated objects can't be labeled: only real objects go into the dataset")
         d = next((t for t in frame.get("tracks", []) if t["id"] == track_id), None)
         tr = next((t for t in self.tracker.tracks if t.id == track_id), None)
         if d is None or tr is None:

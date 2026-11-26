@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { api, CAT_COLOR, CATEGORIES, fmt, METHOD_LABEL, useLive, useToast } from "../api";
+import { api, CAT_COLOR, CATEGORIES, fmt, METHOD_LABEL, setSource, useLive, useToast } from "../api";
 import ScanCanvas, { DEFAULT_LAYERS, Layers } from "../ScanCanvas";
 import { ReplayBar, SourceCard } from "../ReplayBar";
 
@@ -44,7 +44,7 @@ export default function LiveScan() {
           <button className={`btn sm ${persp ? "primary" : ""}`} onClick={() => setPersp((p) => !p)} title="Decorative tilt only. The data stays 2D.">Perspective</button>
         </div>
         <div style={{ position: "absolute", right: 22, top: 20 }}>
-          <span className="stamp">{frame?.source === "replay" ? "replay · recorded" : "2D · single plane"}</span>
+          <span className="stamp">{frame?.source === "simulation" ? "simulation" : frame?.source === "replay" ? "replay · recorded" : "2D · single plane"}</span>
         </div>
         <ReplayBar status={status} />
         <div className="badge2d">
@@ -56,6 +56,7 @@ export default function LiveScan() {
             <b>Waiting for the LiDAR</b>
             <span>{status?.lidar.message ?? "Starting up…"}</span>
             <span className="faint">Nothing here is made up: no sensor, no dots.</span>
+            <button className="btn sm primary" style={{ pointerEvents: "auto", marginTop: 6 }} onClick={() => setSource("simulation")}>No LiDAR with you? Try the simulation</button>
           </div>
         )}
       </div>
@@ -100,6 +101,8 @@ export default function LiveScan() {
                 <span>Risk</span><span>{track.risk}</span>
               </div>
               {track.note && <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>{track.note}</div>}
+              {frame?.source === "simulation" ? <div className="note plain" style={{ marginTop: 14, fontSize: 12 }}>
+                This is a pretend object from the simulation, so it can't be labeled. Only real objects go into your dataset.</div> : <>
               <h3 style={{ marginTop: 14 }}>It's really a…</h3>
               <label className="row" style={{ cursor: "pointer", fontSize: 12, marginBottom: 8 }}>
                 <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
@@ -111,6 +114,7 @@ export default function LiveScan() {
                 <button className="btn sm ghost" onClick={() => api(`/api/dataset/follow/${following.track_id}`, { method: "DELETE" })}>Stop</button>
               </div>}
               <div className="faint" style={{ fontSize: 11.5, marginTop: 10 }}>Label only what you can confirm with your own eyes or synchronized video.</div>
+              </>}
             </>
           )}
         </div>

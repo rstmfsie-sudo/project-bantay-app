@@ -22,7 +22,7 @@ Only then report the change as done.
 - Mounting rotation: `angle_offset_deg = 90` makes the sensor's front point up on screen (user-confirmed fix).
 
 - A Raspberry Pi Pico W is plugged in over USB, but it is not yet running `firmware/pico_rangefinders/main.py`.
-  The three range finders' model is unknown. The firmware assumes TF-Luna/TFmini UART and has not been run on hardware.
+  The three range finders are **TF-Luna** (user-confirmed 2026-11-26). The firmware uses TF-Luna UART frames and has not been run on hardware yet.
 
 ## Honesty rules for the digital twin
 - Twin-trained models use method `ml_synthetic` ("ML (digital twin)"). Their accuracy is on simulated objects only.

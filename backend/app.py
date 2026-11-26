@@ -50,6 +50,8 @@ def get_config():
 
 @app.patch("/api/config")
 def patch_config(patch: dict):
+    if "source" in patch and patch["source"] not in ("serial", "replay", "simulation"):
+        raise HTTPException(400, "source must be serial, replay or simulation")
     if "classifier" in patch and patch["classifier"] not in ("rules", "ml", "nn", "twin"):
         raise HTTPException(400, "classifier must be rules, ml, nn or twin")
     try:
@@ -156,6 +158,8 @@ def add_sample(l: Label):
         return {"id": engine.label_track(l.track_id, l.label, l.notes, l.follow)}
     except KeyError as e:
         raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.delete("/api/dataset/follow/{track_id}")

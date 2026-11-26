@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, RF, Track, TwinMeta, useLive, useToast } from "../api";
+import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, RF, setSource, Track, TwinMeta, useLive, useToast } from "../api";
 import type { ViewProps } from "../App";
 import Iso3D, { Beam, Prim } from "../Iso3D";
 import ScanCanvas, { BEAM_COLOR, DEFAULT_LAYERS } from "../ScanCanvas";
@@ -45,22 +45,37 @@ function useFetch<T>(path: string | null, deps: unknown[] = []) {
 const Cat = ({ c }: { c: string }) => <span><span className="cat" style={{ background: CAT_COLOR[c] ?? "#888" }} />{c}</span>;
 const healthBits = ["Sensor", "Encoder", "Wireless power", "Laser feedback (PD)", "Laser drive (LD)", "Data"];
 
-/** 3D model of the rig: T-mini Plus on a mount, three range finders below it, beams from LIVE readings. */
+/** 3D model of the real sensors (dimensions in metres): three TF-Luna modules (35 x 21.25 x 13.5 mm, twin lenses)
+ * on a small plate around the YDLIDAR T-mini Plus. Each TF-Luna faces its beam; beams show LIVE readings.
+ * The T-mini Plus shape is a simplified look-alike, not an exact CAD model. */
 export function SensorRig({ rf, height = 240 }: { rf: RF | null; height?: number }) {
+  const beamsIn = rf?.beams ?? ([{ side: "L", angle: 20, m: null }, { side: "C", angle: 0, m: null }, { side: "R", angle: -20, m: null }] as RF["beams"]);
+  const front = beamsIn.find((b) => b.side === "C")?.angle ?? 0;
+  const PLATE_Z = 0.03, R = 0.072;                         // TF-Lunas sit on a ring 72 mm from the centre
   const prims: Prim[] = [
-    { type: "box", x: [-0.05, 0.05], y: [-0.05, 0.05], z: [0, 0.55], color: "#5a534c" },          // mount
-    { type: "box", x: [-0.16, 0.16], y: [-0.12, 0.12], z: [0.55, 0.62], color: "#3a3632" },        // plate
-    { type: "cyl", c: [0, 0, 0.62], r: 0.11, h: 0.08, color: "#C96F4A" },                           // T-mini Plus
-    ...(["L", "C", "R"] as const).map((s, i): Prim => ({
-      type: "box", x: [0.13, 0.19], y: [-0.11 + i * 0.08, -0.06 + i * 0.08], z: [0.56, 0.61], color: BEAM_COLOR[s] })),
+    { type: "box", x: [-0.012, 0.012], y: [-0.012, 0.012], z: [0, PLATE_Z], color: "#4a4540" },               // mount stub
+    { type: "box", x: [-0.095, 0.095], y: [-0.085, 0.085], z: [PLATE_Z, PLATE_Z + 0.006], color: "#3a3632" }, // plate
+    { type: "box", x: [-0.03, 0.03], y: [-0.03, 0.03], z: [PLATE_Z + 0.006, PLATE_Z + 0.03], color: "#2a2826" }, // T-mini Plus base
+    { type: "cyl", c: [0, 0, PLATE_Z + 0.03], r: 0.025, h: 0.018, color: "#1d1c1b" },                         // rotating head
+    { type: "lens", c: [0.025, 0, PLATE_Z + 0.039], r: 0.006, yaw: 0, color: "#2a3444" },                     // head window
   ];
-  const base = rf?.beams[0] ? rf.beams[0].angle - 20 : 0;   // keep the rig facing its own front
-  const beams: Beam[] = (rf?.beams ?? [{ side: "L", angle: 20, m: null }, { side: "C", angle: 0, m: null }, { side: "R", angle: -20, m: null }] as RF["beams"])
-    .map((b, i) => ({
-      from: [0.19, -0.085 + i * 0.08, 0.585], angle: b.angle - base, length: Math.min(b.m ?? 1.6, 2.4), live: b.m != null,
-      label: `${b.side}${b.m != null ? ` ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.side],
-    }));
-  return <Iso3D prims={prims} beams={beams} height={height} />;
+  const beams: Beam[] = [];
+  for (const b of beamsIn) {
+    const rel = b.angle - front, t = (rel * Math.PI) / 180, cx = R * Math.cos(t), cy = R * Math.sin(t);
+    const z0 = PLATE_Z + 0.006, z1 = z0 + 0.02125, zc = (z0 + z1) / 2;
+    const ox = -Math.sin(t), oy = Math.cos(t);              // across the face (lens spacing)
+    const fx = cx + 0.0068 * Math.cos(t), fy = cy + 0.0068 * Math.sin(t);   // front face (half of 13.5 mm)
+    prims.push(
+      { type: "box", x: [cx - 0.00675, cx + 0.00675], y: [cy - 0.0175, cy + 0.0175], z: [z0, z1], yaw: rel, color: "#151515" },  // TF-Luna housing
+      { type: "box", x: [cx - 0.006, cx + 0.006], y: [cy - 0.016, cy + 0.016], z: [z1, z1 + 0.0012], yaw: rel, color: BEAM_COLOR[b.side] },
+      { type: "lens", c: [fx + ox * 0.008, fy + oy * 0.008, zc], r: 0.0052, yaw: rel },
+      { type: "lens", c: [fx - ox * 0.008, fy - oy * 0.008, zc], r: 0.0052, yaw: rel },
+    );
+    const vis = b.m != null ? 0.07 + 0.02 * Math.min(b.m, 4) : 0.11;   // drawn short so the sensors stay readable
+    beams.push({ from: [fx, fy, zc], angle: rel, length: vis, live: b.m != null,
+      label: `${b.side === "L" ? "Left" : b.side === "C" ? "Centre" : "Right"} TF-Luna${b.m != null ? ` · ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.side] });
+  }
+  return <Iso3D prims={prims} beams={beams} height={height} yaw={-60} />;
 }
 
 // ============================================================== OVERVIEW
@@ -85,10 +100,11 @@ export function Overview({ go }: ViewProps) {
           <div className="scanwrap" onDoubleClick={() => go("live")}>
             <ScanCanvas frameRef={frameRef} rfRef={rfRef} rangeMax={8} layers={{ ...DEFAULT_LAYERS, labels: false }} compact />
             <div className="row" style={{ position: "absolute", left: 16, top: 16 }}>
-              <span className="stamp">{frame?.source === "replay" ? "replay" : st.cls === "ok" ? "● live" : "no signal"}</span>
+              <span className="stamp">{frame?.source === "simulation" ? "simulation" : frame?.source === "replay" ? "replay" : st.cls === "ok" ? "● live" : "no signal"}</span>
               <span className="stamp">2D · single plane</span>
             </div>
-            {!frame && <div className="empty" style={{ position: "absolute", inset: 0 }}><b>Waiting for the LiDAR</b><span className="faint">Nothing here is made up: no sensor, no dots.</span></div>}
+            {!frame && <div className="empty" style={{ position: "absolute", inset: 0 }}><b>Waiting for the LiDAR</b><span className="faint">Nothing here is made up: no sensor, no dots.</span>
+              <button className="btn sm primary" onClick={() => setSource("simulation")}>No LiDAR with you? Try the simulation</button></div>}
             <button className="btn sm overlay" style={{ right: 12, bottom: 12, padding: "5px 10px" }} onClick={() => go("live")}>Open Live Scan</button>
           </div>
         </div>
@@ -104,7 +120,7 @@ export function Overview({ go }: ViewProps) {
             ))}
           </div>
           <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>
-            {s?.rangefinders.state === "connected" ? "Three range finders live on the Pico W." : "Range finders: " + (s?.rangefinders.message ?? "…")}
+            {s?.rangefinders.state === "connected" ? "Three TF-Luna range finders live on the Pico W." : "TF-Luna range finders: " + (s?.rangefinders.message ?? "…")}
           </div>
         </div>
       </div>
@@ -509,7 +525,7 @@ export function Hardware() {
           </div>
         </div>
         <div className="card">
-          <div className="spread"><h3>Pico W · three range finders</h3>
+          <div className="spread"><h3>Pico W · three TF-Luna range finders</h3>
             <span className="chip"><span className={`dot ${s?.rangefinders.state === "connected" ? "ok" : s?.pico.detected ? "warn" : ""}`} />
               {s?.rangefinders.state === "connected" ? `Live on ${s.rangefinders.port} · ${s.rangefinders.rate_hz.toFixed(0)} Hz` : s?.pico.detected ? `Pico on ${s.pico.port}` : "Pico not plugged in"}</span></div>
           <SensorRig rf={rf} height={200} />
@@ -522,7 +538,7 @@ export function Hardware() {
               </div>))}
           </div>
           <div className="muted" style={{ fontSize: 12 }}>{s?.rangefinders.message}</div>
-          <details style={{ marginTop: 10 }}><summary className="muted" style={{ cursor: "pointer" }}>Wiring (TF-Luna / TFmini, firmware default)</summary>
+          <details style={{ marginTop: 10 }}><summary className="muted" style={{ cursor: "pointer" }}>Wiring (TF-Luna, UART mode)</summary>
             <div className="kv" style={{ fontSize: 12, marginTop: 8 }}>
               <span>Left LiDAR TX</span><span>GP1 (UART0)</span><span>Right LiDAR TX</span><span>GP5 (UART1)</span>
               <span>Centre LiDAR TX</span><span>GP9 (PIO UART)</span><span>LiDAR power</span><span>5 V (VBUS) + GND</span>

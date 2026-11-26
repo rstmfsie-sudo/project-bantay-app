@@ -8,7 +8,7 @@ export type Track = {
   trail: [number, number][]; box: [number, number, number, number]; cluster_id: number;
 };
 export type Frame = {
-  t: number; n_raw: number; n_valid: number; n_foreground: number; source: "serial" | "replay";
+  t: number; n_raw: number; n_valid: number; n_foreground: number; source: "serial" | "replay" | "simulation";
   points: [number, number, number][]; rejected: [number, number][];
   clusters: { id: number; xmin: number; ymin: number; xmax: number; ymax: number; cx: number; cy: number }[];
   tracks: Track[];
@@ -136,9 +136,13 @@ export const fmt = {
   },
 };
 
+/** Switch the data source (live LiDAR, a recording, or the digital-twin simulation). */
+export const setSource = (source: "serial" | "simulation") => api("/api/config", { method: "PATCH", json: { source } });
+
 export function lidarState(s: Status | null): { label: string; cls: "ok" | "warn" | "bad" | "" } {
   if (!s) return { label: "Backend offline", cls: "bad" };
   if (s.source === "replay") return { label: "Replay", cls: "warn" };
+  if (s.source === "simulation") return { label: "Simulation", cls: "warn" };
   const st = s.lidar.state;
   if (st === "scanning" && !s.lidar.stale) return { label: "Scanning", cls: "ok" };
   if (st === "connecting") return { label: "Connecting", cls: "warn" };

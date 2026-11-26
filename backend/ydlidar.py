@@ -255,14 +255,17 @@ class LidarDriver(threading.Thread):
         while not self._halt.is_set():
             cfg = self.get_cfg()
             if cfg["source"] != "serial":
-                st.state, st.message = "disconnected", "Serial acquisition disabled (source set to replay)"
+                st.state, st.message = "disconnected", f"Not using the LiDAR (source: {cfg['source']})"
                 self._restart.wait(1.0)
                 self._restart.clear()
                 continue
             port = self.pick_port(cfg["port"])
+            from serial.tools import list_ports
+            if port and port not in {p.device for p in list_ports.comports()}:
+                port = None                     # chosen port is not plugged in: a normal state, not an error
             if not port:
                 st.state, st.port = "disconnected", None
-                st.message = "No lidar port found. Plug in the USB adapter or choose a port in Hardware."
+                st.message = "LiDAR not plugged in. Everything else still works; it reconnects by itself."
                 self._restart.wait(2.0)
                 self._restart.clear()
                 continue

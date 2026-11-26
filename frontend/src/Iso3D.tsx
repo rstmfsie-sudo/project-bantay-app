@@ -3,7 +3,8 @@ import { useEffect, useRef } from "react";
 /** Tiny isometric 3D renderer (Canvas 2D, no libraries) for simple primitives in metres (x, y ground; z up).
  * Used for the digital-twin object models and the sensor rig. It draws MODELS, never sensor data. */
 export type Prim =
-  | { type: "box"; x: [number, number]; y: [number, number]; z: [number, number]; color?: string }
+  | { type: "box"; x: [number, number]; y: [number, number]; z: [number, number]; color?: string; yaw?: number }
+  | { type: "lens"; c: [number, number, number]; r: number; yaw: number; color?: string }
   | { type: "wheel"; c: [number, number, number]; r: number; w: number; rim: number; color?: string }
   | { type: "cyl"; c: [number, number, number]; r: number; h: number; color?: string };
 export type Beam = { from: [number, number, number]; angle: number; length: number; live: boolean; label: string; color: string };
@@ -49,7 +50,7 @@ export default function Iso3D({ prims, slices = [], sliceZ, beams = [], height =
       const extent = (x: number, y: number, z: number) => pts.push(proj0(x, y, z));
       for (const p of prims) {
         if (p.type === "box") for (const x of p.x) for (const y of p.y) for (const z of p.z) extent(x, y, z);
-        else if (p.type === "wheel") { const [x, y, z] = p.c; extent(x - p.r, y, z - p.r); extent(x + p.r, y, z + p.r); }
+        else if (p.type === "wheel" || p.type === "lens") { const [x, y, z] = p.c; extent(x - p.r, y - p.r, z - p.r); extent(x + p.r, y + p.r, z + p.r); }
         else { const [x, y, z] = p.c; extent(x - p.r, y - p.r, z); extent(x + p.r, y + p.r, z + p.h); }
       }
       for (const b of beams) { const r = (b.angle * Math.PI) / 180; extent(b.from[0] + Math.cos(r) * b.length, b.from[1] + Math.sin(r) * b.length, b.from[2]); }
@@ -73,7 +74,7 @@ export default function Iso3D({ prims, slices = [], sliceZ, beams = [], height =
 
       const items = prims.map((p) => {
         const c = p.type === "box" ? [(p.x[0] + p.x[1]) / 2, (p.y[0] + p.y[1]) / 2] : [p.c[0], p.c[1]];
-        return { p, d: depth(c[0], c[1]) };
+        return { p, d: depth(c[0], c[1]) + (p.type === "lens" ? 0.02 : 0) };   // lenses sit on their housing's face
       }).sort((m, n) => m.d - n.d);
       const line = css("--line-2") || "rgba(0,0,0,.2)";
 
@@ -89,12 +90,29 @@ export default function Iso3D({ prims, slices = [], sliceZ, beams = [], height =
         const below = p.type === "box" ? p.z[0] < (sliceZ ?? -1) : true;
         if (!planeDrawn && !below) { drawSlicePlane(); planeDrawn = true; }
         if (p.type === "box") {
-          const [x0, x1] = p.x, [y0, y1] = p.y, [z0, z1] = p.z;
-          // visible faces depend on yaw: pick the two side faces nearer the viewer
-          const fx = depth(x1, 0) > depth(x0, 0) ? x1 : x0, fy = depth(0, y1) > depth(0, y0) ? y1 : y0;
-          poly([P(fx, y0, z0), P(fx, y1, z0), P(fx, y1, z1), P(fx, y0, z1)], shade(base, 0.72), line);
-          poly([P(x0, fy, z0), P(x1, fy, z0), P(x1, fy, z1), P(x0, fy, z1)], shade(base, 0.88), line);
-          poly([P(x0, y0, z1), P(x1, y0, z1), P(x1, y1, z1), P(x0, y1, z1)], shade(base, 1.12), line);
+          // box with its own yaw: draw only the side faces turned toward the viewer, then the top
+          const cx = (p.x[0] + p.x[1]) / 2, cy = (p.y[0] + p.y[1]) / 2, hx = (p.x[1] - p.x[0]) / 2, hy = (p.y[1] - p.y[0]) / 2;
+          const [z0, z1] = p.z, yw = ((p.yaw ?? 0) * Math.PI) / 180, cw = Math.cos(yw), sw = Math.sin(yw);
+          const W = (lx: number, ly: number, z: number) => P(cx + lx * cw - ly * sw, cy + lx * sw + ly * cw, z);
+          const sides: [number, number, [number, number][]][] = [
+            [1, 0, [[hx, -hy], [hx, hy]]], [-1, 0, [[-hx, hy], [-hx, -hy]]], [0, 1, [[hx, hy], [-hx, hy]]], [0, -1, [[-hx, -hy], [hx, -hy]]]];
+          for (const [nx, ny, [[ax, ay], [bx, by]]] of sides) {
+            const wx = nx * cw - ny * sw, wy = nx * sw + ny * cw;
+            const facing = depth(wx, wy);
+            if (facing <= 0) continue;
+            poly([W(ax, ay, z0), W(bx, by, z0), W(bx, by, z1), W(ax, ay, z1)], shade(base, 0.68 + 0.25 * Math.min(1, facing / 1.4)), line);
+          }
+          poly([W(-hx, -hy, z1), W(hx, -hy, z1), W(hx, hy, z1), W(-hx, hy, z1)], shade(base, 1.12), line);
+        } else if (p.type === "lens") {
+          // round optic on a housing face (TF-Luna emitter / receiver): dark glass with a highlight
+          const yw = (p.yaw * Math.PI) / 180, nx = Math.cos(yw), ny = Math.sin(yw);
+          if (depth(nx, ny) <= 0) continue;
+          const [x, y, z] = p.c, n = 24;
+          const pts = Array.from({ length: n }, (_, i) => { const t = (i / n) * Math.PI * 2;
+            return P(x - Math.sin(yw) * p.r * Math.cos(t), y + Math.cos(yw) * p.r * Math.cos(t), z + p.r * Math.sin(t)); });
+          poly(pts, p.color ?? "#1b2330", "rgba(255,255,255,.35)");
+          const [hx, hy] = P(x - Math.sin(yw) * p.r * -0.35, y + Math.cos(yw) * p.r * -0.35, z + p.r * 0.35);
+          ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.arc(hx, hy, Math.max(1.2, p.r * s * 0.22), 0, Math.PI * 2); ctx.fill();
         } else if (p.type === "wheel") {
           const [x, y, z] = p.c, n = 28;
           for (const yy of [y - p.w / 2, y + p.w / 2]) {

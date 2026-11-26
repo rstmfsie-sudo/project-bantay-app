@@ -295,3 +295,56 @@ class TwinModel:
 def preview(height: float) -> dict:
     """3D primitives + cross-sections for the UI's 3D view of each class."""
     return {k: {"prims": model(k), "slice": slice_at(model(k), height)} for k in CLASSES}
+
+
+# ---------------------------------------------------------------- live simulation source
+class SimulationThread(threading.Thread):
+    """Live pretend traffic for using the app without the LiDAR (source = "simulation").
+    Emits twin scans at the T-mini Plus rate. The engine marks every frame SIMULATION and never records,
+    logs or labels it."""
+
+    def __init__(self, engine):
+        super().__init__(daemon=True, name="simulation")
+        self.engine = engine
+        self.rng = np.random.default_rng()
+        self.objects: list[dict] = []
+        self.next_spawn = 0.0
+        self.static = _edges(static_scene(np.random.default_rng(0)), 0, 0, 0)
+
+    def _spawn(self, now):
+        kind = str(self.rng.choice(CLASSES, p=[0.35, 0.3, 0.1, 0.25]))   # roughly what passes a Leyte roadside
+        side = self.rng.choice([-1, 1])
+        lane = side * (self.rng.uniform(1.0, 3.0) if kind == "pedestrian" else self.rng.uniform(2.0, 6.0))
+        if lane < 0 and abs(lane) < 2.0:
+            lane = -2.0 - abs(lane)                                  # stay in front of the wall behind the sensor
+        direction = self.rng.choice([-1, 1])
+        self.objects.append({"kind": kind, "lane": lane, "dir": direction, "x": -10.0 * direction,
+                             "speed": self.rng.uniform(*SPEEDS[kind]) * (0.6 if kind != "pedestrian" else 1.0),
+                             "refl": self.rng.uniform(0.2, 0.8), "seed": int(self.rng.integers(1 << 30)), "t0": now})
+        self.next_spawn = now + self.rng.uniform(1.5, 5.0)
+
+    def run(self):
+        n_rays = int(round(360 / STEP_DEG))
+        while True:
+            if self.engine.cfg.get()["source"] != "simulation":
+                self.objects = []
+                time.sleep(0.5)
+                continue
+            now = time.time()
+            if now >= self.next_spawn and len(self.objects) < 4:
+                self._spawn(now)
+            segs, reflect = [], []
+            for o in self.objects:
+                o["x"] += o["dir"] * o["speed"] / SCAN_HZ
+                prims = model(o["kind"], rng=np.random.default_rng(o["seed"]),
+                              phase=2 * math.pi * o["speed"] / 1.4 * (now - o["t0"]))
+                e = _edges(slice_at(prims, self.engine.cfg.get()["mount_height_m"]), o["x"], o["lane"],
+                           0.0 if o["dir"] > 0 else math.pi)
+                segs += e
+                reflect += [max_range(o["refl"])] * len(e)
+            self.objects = [o for o in self.objects if abs(o["x"]) <= 11.0]
+            a, d = raycast(segs + self.static, reflect + [12.0] * len(self.static), self.rng, n_rays)
+            scan = _Scan(now, a, d)
+            scan.freq_hz = SCAN_HZ
+            self.engine.on_scan(scan)
+            time.sleep(max(0.0, 1.0 / SCAN_HZ - (time.time() - now)))

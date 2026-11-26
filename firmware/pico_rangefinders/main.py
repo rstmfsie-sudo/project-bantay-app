@@ -2,8 +2,9 @@
 # Reads THREE single-beam lidar range finders, sends readings to the PC app over USB,
 # and drives the warning LEDs + a quiet buzzer from alert levels the app sends back.
 #
-# STATUS: written for the Benewake TF-Luna / TFmini(-S / Plus) UART frame. NOT yet run on the real hardware:
-# confirm your sensor model, then check the pins below before powering anything.
+# STATUS: written for the Benewake TF-Luna UART frame (the project's sensors are TF-Luna). NOT yet run on the
+# real hardware: check the pins below before powering anything. TF-Luna must be in UART mode (its default;
+# pin 5 'configuration' left floating or high, not tied to GND, which selects I2C).
 #
 # Wiring (default, SENSOR_TYPE = "benewake_uart"):
 #   Left   lidar  TX -> GP1  (UART0 RX)          Right lidar TX -> GP5 (UART1 RX)

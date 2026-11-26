@@ -80,3 +80,24 @@ def test_driver_threads_can_be_joined():
         t.stop()
         t.join(timeout=5)
         assert not t.is_alive()
+
+
+def test_simulation_source_is_isolated():
+    import time
+    import pytest
+    from backend.engine import Engine
+    e = Engine()
+    e.cfg.update({"source": "simulation", "mount_height_m": 0.6, "record": True})
+    e.sim.next_spawn = 0
+    e.start()
+    deadline = time.time() + 25
+    while time.time() < deadline and not (e.frame and e.frame["source"] == "simulation" and e.frame["tracks"]):
+        time.sleep(0.2)
+    assert e.frame and e.frame["source"] == "simulation" and e.frame["tracks"], "simulation produced no tracked objects"
+    with pytest.raises(ValueError):
+        e.label_track(e.frame["tracks"][0]["id"], "car")          # never into the real dataset
+    time.sleep(1.5)
+    assert e.db.detections()[0] == 0                                 # never into Data History
+    from backend.config import DATA
+    assert not list((DATA / "recordings").glob("scan-*.jsonl"))      # never recorded
+    e.cfg.update({"source": "replay", "record": False})

@@ -18,7 +18,7 @@ CONFIG_FILE = DATA / "config.json"
 
 DEFAULTS = {
     # acquisition
-    "source": "serial",           # serial | replay
+    "source": "serial",           # serial | replay | simulation (digital twin, no LiDAR needed)
     "port": "auto",
     "baud": 230400,                # T-mini Plus manual / SDK Dataset.md
     "replay_file": "",
@@ -68,7 +68,7 @@ DEFAULTS = {
     "log_interval_s": 1.0,         # one detection row per confirmed track per interval
     "retention_days": 30,
     "open_browser": True,
-    "exit_when_unplugged": True,   # close the app when a lidar that was working disappears
+    "exit_when_unplugged": False,  # close the app when a lidar that was working disappears (off: works without it)
     "unplug_grace_s": 20.0,        # ...and stays gone this long (brief cable wiggles are tolerated)
 }
 

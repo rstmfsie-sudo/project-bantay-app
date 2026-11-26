@@ -286,3 +286,75 @@ table.t { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-
 /* brand */
 .brand-name { font-weight: 700; letter-spacing: .06em; }
 .brand-name small { display: block; font: 500 9.5px var(--mono); letter-spacing: .2em; color: var(--muted); margin-bottom: -2px; }
+
+/* ======================================================================
+   Liquid Glass (inspired by iOS 26): clear refractive glass, specular rims, floating capsules.
+   The window itself is clear so every glass panel bends and blurs the real wallpaper behind it.
+   ====================================================================== */
+:root { --lg-tint: rgba(255,255,255,.07); --lg-tint-2: rgba(255,255,255,.02); --lg-rim: rgba(255,255,255,.55); --lg-rim-soft: rgba(255,255,255,.14); }
+[data-theme="light"] { --lg-tint: rgba(255,255,255,.55); --lg-tint-2: rgba(255,255,255,.28); --lg-rim: rgba(255,255,255,.95); --lg-rim-soft: rgba(255,255,255,.5); }
+
+.window { background: color-mix(in srgb, var(--window) 22%, transparent); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* the glass material */
+.card, .overlay, .btn, .seg, .chip, .toast, .titlebar, .sidebar, .statusbar, .nav.active, .steps {
+  position: relative;
+  background: linear-gradient(145deg, var(--lg-tint), var(--lg-tint-2));
+  backdrop-filter: blur(22px) saturate(1.9) brightness(1.04); -webkit-backdrop-filter: blur(22px) saturate(1.9) brightness(1.04);
+  border: 1px solid var(--lg-rim-soft);
+  box-shadow: inset 0 1px 0 var(--lg-rim), inset 0 -1px 1px rgba(255,255,255,.06), inset 0 0 18px rgba(255,255,255,.05),
+    0 10px 30px rgba(0,0,0,.22);
+}
+/* specular rim: light catching the top-left and bottom-right edges */
+.card::before, .overlay::before, .btn::before, .seg::before, .toast::before, .sidebar::before, .chip::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(135deg, var(--lg-rim) 0%, transparent 32%, transparent 68%, color-mix(in srgb, var(--lg-rim) 55%, transparent) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+}
+/* refraction on the floating controls (lens effect over whatever is behind) */
+.titlebar, .overlay, .seg, .toast, .sidebar {
+  backdrop-filter: blur(16px) saturate(2) url(#lg-refract); -webkit-backdrop-filter: blur(16px) saturate(2);
+}
+
+/* floating glass sidebar and bars */
+.body { gap: 0; }
+.sidebar { margin: 10px 0 10px 10px; border-radius: 22px; border-right: 1px solid var(--lg-rim-soft); }
+.titlebar { border-bottom: 1px solid var(--lg-rim-soft); }
+.statusbar { border-top: 1px solid var(--lg-rim-soft); box-shadow: inset 0 1px 0 var(--lg-rim-soft); }
+.card { border-radius: 22px; }
+
+/* capsule buttons and controls */
+.btn { border-radius: 999px; padding: 7px 15px; }
+.btn.sm { padding: 4px 11px; }
+.btn:hover { background: linear-gradient(145deg, rgba(255,255,255,.16), rgba(255,255,255,.05)); }
+.btn.primary {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent-hi) 88%, white 12%), color-mix(in srgb, var(--accent) 85%, transparent));
+  color: #1A1917; border-color: rgba(255,255,255,.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), inset 0 -2px 6px rgba(0,0,0,.12), 0 6px 20px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.btn.ghost { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; }
+.btn.ghost::before { display: none; }
+.seg { border-radius: 999px; padding: 3px; }
+.seg button { border-radius: 999px; }
+.seg button.on { background: linear-gradient(145deg, rgba(255,255,255,.32), rgba(255,255,255,.1));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 2px 8px rgba(0,0,0,.18); color: var(--text); }
+.overlay { border-radius: 999px; }
+.overlay[role="alert"] { border-radius: 18px; }
+.chip { border-radius: 999px; }
+.nav { border-radius: 14px; }
+.nav.active { border-radius: 14px; }
+.toast { border-radius: 18px; }
+input[type=text], input[type=number], select { border-radius: 12px; background: rgba(255,255,255,.08); border-color: var(--lg-rim-soft); }
+
+/* gentle liquid highlight that follows the glass as it lifts on hover */
+.card { transition: transform .35s var(--ease), box-shadow .35s var(--ease); }
+.card:hover { transform: translateY(-1px); box-shadow: inset 0 1px 0 var(--lg-rim), inset 0 0 24px rgba(255,255,255,.07), 0 16px 40px rgba(0,0,0,.26); }
+
+@media (prefers-reduced-transparency: reduce) {
+  .card, .overlay, .btn, .seg, .chip, .toast, .titlebar, .sidebar, .statusbar, .window {
+    backdrop-filter: none !important; -webkit-backdrop-filter: none !important; background: var(--surface) !important; }
+}
+
+/* overlays keep their absolute placement (the glass rule above sets position: relative) */
+.overlay { position: absolute; }

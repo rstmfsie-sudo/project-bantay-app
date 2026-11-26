@@ -48,12 +48,13 @@ export function SourceCard({ status }: { status: Status | null }) {
     try { setCfg(await api<Config>("/api/config", { method: "PATCH", json: p })); }
     catch (e) { toast({ title: "Could not switch source", body: (e as Error).message, kind: "bad" }); }
   };
-  const replay = cfg?.source === "replay";
+  const replay = cfg?.source === "replay", sim = cfg?.source === "simulation";
   return (
     <div className="card">
       <h3>Source</h3>
       <div className="seg" style={{ marginBottom: 10 }}>
-        <button className={!replay ? "on" : ""} onClick={() => patch({ source: "serial" })}>Live sensor</button>
+        <button className={!replay && !sim ? "on" : ""} onClick={() => patch({ source: "serial" })}>Live sensor</button>
+        <button className={sim ? "on" : ""} onClick={() => patch({ source: "simulation" })} title="Pretend traffic from the digital twin">Simulation</button>
         <button className={replay ? "on" : ""} disabled={!recs.length}
           onClick={() => patch({ source: "replay", replay_file: String(cfg?.replay_file || recs[0]?.name || "") })}>Recording</button>
       </div>
@@ -61,6 +62,9 @@ export function SourceCard({ status }: { status: Status | null }) {
         <select value={String(cfg?.replay_file ?? "")} onChange={(e) => patch({ replay_file: e.target.value })} style={{ width: "100%" }}>
           {recs.map((r) => <option key={r.name} value={r.name}>{r.name} ({(r.bytes / 1e6).toFixed(1)} MB)</option>)}
         </select>
+      ) : sim ? (
+        <div className="muted" style={{ fontSize: 12 }}>Pretend cars, motorcycles, bicycles and people from the digital twin, so you can use the app anywhere.
+          Nothing is saved or labeled.</div>
       ) : (
         <div className="muted" style={{ fontSize: 12 }}>
           {recs.length ? `${recs.length} recording(s) available to label calmly later.` : "No recordings yet: turn on Record raw scans in Hardware."}
