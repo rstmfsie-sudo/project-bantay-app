@@ -2,10 +2,11 @@ import { useCallback, useState } from "react";
 import { api, CAT_COLOR, CATEGORIES, fmt, METHOD_LABEL, setSource, useLive, useToast } from "../api";
 import ScanCanvas, { DEFAULT_LAYERS, Layers } from "../ScanCanvas";
 import { ReplayBar, SourceCard } from "../ReplayBar";
+import TwinView from "../TwinView";
 
 const LAYER_NAMES: [keyof Layers, string][] = [
   ["rejected", "Rejected raw"], ["filtered", "Filtered points"], ["clusters", "Clusters"],
-  ["tracks", "Tracked objects"], ["labels", "Labels"], ["trails", "Trails"],
+  ["tracks", "Tracked objects"], ["solid3d", "3D objects"], ["labels", "Labels"], ["trails", "Trails"],
 ];
 
 export default function LiveScan() {
@@ -14,6 +15,8 @@ export default function LiveScan() {
   const [range, setRange] = useState(() => Number(localStorage.getItem("range") || 8));
   const [layers, setLayers] = useState<Layers>(() => ({ ...DEFAULT_LAYERS, ...JSON.parse(localStorage.getItem("layers") || "{}") }));
   const [persp, setPersp] = useState(false);
+  const [view, setView] = useState<"2d" | "3d">(() => (new URLSearchParams(location.search).get("scanview") as "2d" | "3d") || (localStorage.getItem("scanView") as "2d" | "3d") || "2d");
+  const pickView = (v: "2d" | "3d") => { setView(v); localStorage.setItem("scanView", v); };
   const [reset, setReset] = useState(0);
   const [sel, setSel] = useState<number | null>(null);
   const [follow, setFollow] = useState(true);
@@ -35,21 +38,30 @@ export default function LiveScan() {
   return (
     <div className="live-layout">
       <div className={`scanwrap ${persp ? "persp" : ""}`}>
-        <ScanCanvas frameRef={frameRef} rfRef={rfRef} rangeMax={range} layers={layers} selected={sel} onSelect={onSelect} resetKey={reset} />
+        {view === "3d" ? <TwinView frameRef={frameRef} rangeMax={range} /> :
+        <ScanCanvas frameRef={frameRef} rfRef={rfRef} rangeMax={range} layers={layers} selected={sel} onSelect={onSelect} resetKey={reset} />}
         <div className="overlay" style={{ left: 14, top: 14 }}>
           <div className="seg">{[4, 8, 12].map((r) => (
             <button key={r} className={range === r ? "on" : ""} onClick={() => { setRange(r); localStorage.setItem("range", String(r)); }}>{r} m</button>
           ))}</div>
-          <button className="btn sm" onClick={() => setReset((x) => x + 1)}>Reset view</button>
-          <button className={`btn sm ${persp ? "primary" : ""}`} onClick={() => setPersp((p) => !p)} title="Decorative tilt only. The data stays 2D.">Perspective</button>
+          <div className="seg">
+            <button className={view === "2d" ? "on" : ""} onClick={() => pickView("2d")}>2D</button>
+            <button className={view === "3d" ? "on" : ""} onClick={() => pickView("3d")} title="Digital-twin 3D view">3D twin</button>
+          </div>
+          {view === "2d" && <>
+            <button className="btn sm" onClick={() => setReset((x) => x + 1)}>Reset view</button>
+            <button className={`btn sm ${persp ? "primary" : ""}`} onClick={() => setPersp((p) => !p)} title="Decorative tilt only. The data stays 2D.">Perspective</button>
+          </>}
         </div>
         <div style={{ position: "absolute", right: 22, top: 20 }}>
           <span className="stamp">{frame?.source === "simulation" ? "simulation" : frame?.source === "replay" ? "replay · recorded" : "2D · single plane"}</span>
         </div>
         <ReplayBar status={status} />
         <div className="badge2d">
+          {view === "3d" ? "3D digital-twin view: each object is shown as the 3D model of its detected type at its tracked spot. The shapes are illustrations; the LiDAR measures a flat slice. Drag to turn · scroll to zoom" : <>
           {persp ? "Tilted just for looks: the measurements are still a flat 2D slice. " : "Looking down from above. "}
-          Scroll to zoom · drag to move · click something to see what it is
+          {layers.solid3d && "3D blocks use each type's typical height (the LiDAR measures a flat slice). "}
+          Scroll to zoom · drag to move · click something to see what it is</>}
         </div>
         {noData && (
           <div className="empty" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
@@ -65,7 +77,7 @@ export default function LiveScan() {
         <div className="card">
           <h3>Scan</h3>
           <div className="kv">
-            <span>Source</span><span>{frame?.source === "replay" ? "REPLAY" : status?.lidar.state ?? "—"}</span>
+            <span>Source</span><span>{frame?.source === "simulation" ? "SIMULATION" : frame?.source === "replay" ? "REPLAY" : status?.lidar.state ?? "—"}</span>
             <span>Raw returns</span><span>{frame?.n_raw ?? "—"}</span>
             <span>Valid (filtered)</span><span>{frame?.n_valid ?? "—"}</span>
             <span>Foreground</span><span>{frame?.n_foreground ?? "—"}</span>

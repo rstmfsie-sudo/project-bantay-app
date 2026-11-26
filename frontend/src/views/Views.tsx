@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, RF, setSource, Track, TwinMeta, useLive, useToast } from "../api";
 import type { ViewProps } from "../App";
-import Iso3D, { Beam, Prim } from "../Iso3D";
+import Iso3D, { Beam, Prim, roundedRect } from "../Iso3D";
+import { tfLuna } from "../sensors3d";
 import ScanCanvas, { BEAM_COLOR, DEFAULT_LAYERS } from "../ScanCanvas";
 
 /** One friendly italic line under each page title. */
@@ -45,37 +46,36 @@ function useFetch<T>(path: string | null, deps: unknown[] = []) {
 const Cat = ({ c }: { c: string }) => <span><span className="cat" style={{ background: CAT_COLOR[c] ?? "#888" }} />{c}</span>;
 const healthBits = ["Sensor", "Encoder", "Wireless power", "Laser feedback (PD)", "Laser drive (LD)", "Data"];
 
-/** 3D model of the real sensors (dimensions in metres): three TF-Luna modules (35 x 21.25 x 13.5 mm, twin lenses)
- * on a small plate around the YDLIDAR T-mini Plus. Each TF-Luna faces its beam; beams show LIVE readings.
- * The T-mini Plus shape is a simplified look-alike, not an exact CAD model. */
+/** 3D model of the real sensors (metres): three upright TF-Luna modules around the YDLIDAR T-mini Plus.
+ * Each TF-Luna faces its beam; beams show LIVE readings. The T-mini Plus is a simplified look-alike. */
 export function SensorRig({ rf, height = 240 }: { rf: RF | null; height?: number }) {
   const beamsIn = rf?.beams ?? ([{ side: "L", angle: 20, m: null }, { side: "C", angle: 0, m: null }, { side: "R", angle: -20, m: null }] as RF["beams"]);
   const front = beamsIn.find((b) => b.side === "C")?.angle ?? 0;
-  const PLATE_Z = 0.03, R = 0.072;                         // TF-Lunas sit on a ring 72 mm from the centre
+  const PLATE_Z = 0.02, TOP = PLATE_Z + 0.005, BAR_X = 0.05;   // TF-Lunas sit in a row along the front edge
   const prims: Prim[] = [
-    { type: "box", x: [-0.012, 0.012], y: [-0.012, 0.012], z: [0, PLATE_Z], color: "#4a4540" },               // mount stub
-    { type: "box", x: [-0.095, 0.095], y: [-0.085, 0.085], z: [PLATE_Z, PLATE_Z + 0.006], color: "#3a3632" }, // plate
-    { type: "box", x: [-0.03, 0.03], y: [-0.03, 0.03], z: [PLATE_Z + 0.006, PLATE_Z + 0.03], color: "#2a2826" }, // T-mini Plus base
-    { type: "cyl", c: [0, 0, PLATE_Z + 0.03], r: 0.025, h: 0.018, color: "#1d1c1b" },                         // rotating head
-    { type: "lens", c: [0.025, 0, PLATE_Z + 0.039], r: 0.006, yaw: 0, color: "#2a3444" },                     // head window
+    { type: "box", x: [-0.01, 0.01], y: [-0.01, 0.01], z: [0, PLATE_Z], color: "#4a4540", order: -10 },            // mount stub
+    { type: "prism", c: [0.012, 0, PLATE_Z + 0.0025], yaw: 0, depth: 0.1, outline: roundedRect(0.12, 0.005, 0.002), color: "#3a3531", order: -9 }, // plate
+    { type: "box", x: [-0.028, 0.028], y: [-0.024, 0.024], z: [TOP, TOP + 0.024], color: "#232120" },             // T-mini Plus body
+    { type: "cyl", c: [0, 0, TOP + 0.024], r: 0.022, h: 0.016, color: "#151414" },                                 // rotating head
+    { type: "lens", c: [0.022, 0, TOP + 0.032], r: 0.005, yaw: 0, color: "#1e2733" },                              // head window
   ];
   const beams: Beam[] = [];
   for (const b of beamsIn) {
-    const rel = b.angle - front, t = (rel * Math.PI) / 180, cx = R * Math.cos(t), cy = R * Math.sin(t);
-    const z0 = PLATE_Z + 0.006, z1 = z0 + 0.02125, zc = (z0 + z1) / 2;
-    const ox = -Math.sin(t), oy = Math.cos(t);              // across the face (lens spacing)
-    const fx = cx + 0.0068 * Math.cos(t), fy = cy + 0.0068 * Math.sin(t);   // front face (half of 13.5 mm)
-    prims.push(
-      { type: "box", x: [cx - 0.00675, cx + 0.00675], y: [cy - 0.0175, cy + 0.0175], z: [z0, z1], yaw: rel, color: "#151515" },  // TF-Luna housing
-      { type: "box", x: [cx - 0.006, cx + 0.006], y: [cy - 0.016, cy + 0.016], z: [z1, z1 + 0.0012], yaw: rel, color: BEAM_COLOR[b.side] },
-      { type: "lens", c: [fx + ox * 0.008, fy + oy * 0.008, zc], r: 0.0052, yaw: rel },
-      { type: "lens", c: [fx - ox * 0.008, fy - oy * 0.008, zc], r: 0.0052, yaw: rel },
-    );
-    const vis = b.m != null ? 0.07 + 0.02 * Math.min(b.m, 4) : 0.11;   // drawn short so the sensors stay readable
+    const rel = b.angle - front, t = (rel * Math.PI) / 180;
+    const zc = TOP + 0.006 + 0.0175;                         // housing centre height (ears clear the plate)
+    const py = b.side === "L" ? 0.032 : b.side === "R" ? -0.032 : 0;   // left / centre / right along the bar
+    prims.push(...tfLuna([BAR_X, py, zc], rel, BEAM_COLOR[b.side]));
+    const fx = BAR_X + 0.0068 * Math.cos(t), fy = py + 0.0068 * Math.sin(t);
+    const vis = b.m != null ? 0.04 + 0.012 * Math.min(b.m, 4) : 0.035;   // drawn short so the sensors stay readable
     beams.push({ from: [fx, fy, zc], angle: rel, length: vis, live: b.m != null,
-      label: `${b.side === "L" ? "Left" : b.side === "C" ? "Centre" : "Right"} TF-Luna${b.m != null ? ` · ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.side] });
+      label: `${b.side === "L" ? "Left" : b.side === "C" ? "Centre" : "Right"}${b.m != null ? ` · ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.side] });
   }
-  return <Iso3D prims={prims} beams={beams} height={height} yaw={-60} />;
+  return <Iso3D prims={prims} beams={beams} height={height} yaw={-55} />;
+}
+
+/** Large rotating TF-Luna, to show what the range finders look like. */
+export function TfLunaCloseup({ height = 220 }: { height?: number }) {
+  return <Iso3D prims={tfLuna([0, 0, 0.02], 0)} height={height} yaw={-35} />;
 }
 
 // ============================================================== OVERVIEW
@@ -528,7 +528,10 @@ export function Hardware() {
           <div className="spread"><h3>Pico W · three TF-Luna range finders</h3>
             <span className="chip"><span className={`dot ${s?.rangefinders.state === "connected" ? "ok" : s?.pico.detected ? "warn" : ""}`} />
               {s?.rangefinders.state === "connected" ? `Live on ${s.rangefinders.port} · ${s.rangefinders.rate_hz.toFixed(0)} Hz` : s?.pico.detected ? `Pico on ${s.pico.port}` : "Pico not plugged in"}</span></div>
-          <SensorRig rf={rf} height={200} />
+          <div className="grid" style={{ gridTemplateColumns: "1.5fr 1fr", gap: 8, alignItems: "center" }}>
+            <SensorRig rf={rf} height={210} />
+            <div><TfLunaCloseup height={190} /><div className="faint" style={{ fontSize: 11, textAlign: "center" }}>TF-Luna · 35 × 21 × 13.5 mm</div></div>
+          </div>
           <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 8, margin: "4px 0 12px" }}>
             {rf?.beams.map((b) => (
               <div key={b.side} className="mono" style={{ fontSize: 12 }}>

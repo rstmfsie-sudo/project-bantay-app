@@ -89,7 +89,7 @@ function Boot({ onDone }: { onDone: () => void }) {
         <div className="boot-logo"><div className="ring" /><div className="sweep" /><Logo size={84} /></div>
         <div className="faint mono" style={{ fontSize: 11, letterSpacing: ".3em", marginBottom: 4 }}>PROJECT</div>
         <h1>B.A.N.T.A.Y.</h1>
-        <div className="sub">keeping watch over the road, all the way around</div>
+        <div className="sub motto">Never Ride Blind</div>
         <div className="steps" aria-live="polite">
           {checks.map((c, i) => c && (
             <div className="step" key={i}>
@@ -173,7 +173,6 @@ export default function App() {
                   title={live.alert.S ? `Heads up: ${live.alert.reasons.join(", ")}` : "All clear"}
                   aria-label={live.alert.S === 2 ? "Warning: something is very close" : live.alert.S === 1 ? "Caution: something is near" : "All clear"} />
                 {s?.source === "replay" && <span className="chip accent">REPLAY · recorded data</span>}
-                {s?.source === "simulation" && <span className="chip accent">SIMULATION</span>}
                 {s?.recording && <span className="chip accent"><span className="dot bad pulse" /> REC</span>}
                 <span className="chip"><span className={`dot ${st.cls} ${st.cls === "ok" ? "pulse" : ""}`} /> {st.label}</span>
               </div>

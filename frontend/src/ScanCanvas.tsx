@@ -3,8 +3,10 @@ import { CAT_COLOR, Frame, RF } from "./api";
 
 export const BEAM_COLOR: Record<string, string> = { L: "#7EA6E0", C: "#8CC79A", R: "#C3A1EC" };
 
-export type Layers = { rejected: boolean; filtered: boolean; clusters: boolean; tracks: boolean; labels: boolean; trails: boolean };
-export const DEFAULT_LAYERS: Layers = { rejected: false, filtered: true, clusters: true, tracks: true, labels: true, trails: true };
+export type Layers = { rejected: boolean; filtered: boolean; clusters: boolean; tracks: boolean; labels: boolean; trails: boolean; solid3d: boolean };
+export const DEFAULT_LAYERS: Layers = { rejected: false, filtered: true, clusters: true, tracks: true, labels: true, trails: true, solid3d: true };
+/** Typical heights (m) used only to DRAW 3D blocks: the 2D LiDAR does not measure height. */
+const HEIGHT_3D: Record<string, number> = { car: 1.45, motorcycle: 1.2, bicycle: 1.1, pedestrian: 1.7, unknown: 1.0 };
 
 type Props = {
   frameRef: React.MutableRefObject<Frame | null>;
@@ -91,6 +93,24 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
           }
           ctx.setLineDash([]);
         }
+        if (layers.tracks && layers.solid3d) {
+          // 3D blocks rising from each object's footprint (oblique view); far objects first so near ones overlap
+          for (const t of [...f.tracks].sort((a, b) => b.y - a.y)) {
+            const col = CAT_COLOR[t.category] ?? colors.fg;
+            const cxw = (t.box[0] + t.box[2]) / 2, cyw = (t.box[1] + t.box[3]) / 2;
+            const hw = Math.max(0.15, (t.box[2] - t.box[0]) / 2), hh = Math.max(0.15, (t.box[3] - t.box[1]) / 2);
+            const hgt = (HEIGHT_3D[t.category] ?? 1) * scale, dx = hgt * 0.32, dy = -hgt * 0.62;
+            const base: [number, number][] = [[sx(cxw - hw), sy(cyw - hh)], [sx(cxw + hw), sy(cyw - hh)], [sx(cxw + hw), sy(cyw + hh)], [sx(cxw - hw), sy(cyw + hh)]];
+            const top = base.map(([x, y]) => [x + dx, y + dy] as [number, number]);
+            const quad = (q: [number, number][], a: number) => {
+              ctx.beginPath(); q.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath();
+              ctx.globalAlpha = a; ctx.fillStyle = col; ctx.fill(); ctx.globalAlpha = Math.min(1, a + 0.45); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke();
+            };
+            for (let i = 0; i < 4; i++) quad([base[i], base[(i + 1) % 4], top[(i + 1) % 4], top[i]], 0.14);
+            quad(top, 0.32);
+            ctx.globalAlpha = 1;
+          }
+        }
         if (layers.tracks) {
           for (const t of f.tracks) {
             const col = CAT_COLOR[t.category] ?? colors.fg;
@@ -116,7 +136,8 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
               const label = `#${t.id} ${t.category}  ${t.range.toFixed(1)} m`;
               ctx.font = `600 11px ${css("--font")}`;
               const tw = ctx.measureText(label).width;
-              const lx = sx(x0) - 6, ly = sy(y1) - 26;
+              const lift = layers.solid3d ? (HEIGHT_3D[t.category] ?? 1) * scale * 0.62 : 0;
+              const lx = sx(x0) - 6, ly = sy(y1) - 26 - lift;
               ctx.fillStyle = colors.labelBg; roundRect(ctx, lx, ly, tw + 12, 18, 5); ctx.fill();
               ctx.fillStyle = colors.text; ctx.fillText(label, lx + 6, ly + 13);
             }
