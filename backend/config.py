@@ -79,7 +79,6 @@ DEFAULTS = {
     "alert_sound": True,           # soft chime in the app
     "alert_volume": 0.3,           # 0..1 (kept quiet: max gain is low)
     "alert_light": True,           # gentle glow in the app
-    "pico_alerts": True,           # forward levels to the Pico LEDs / buzzer
     "mount_height_m": 0.6,         # height of the scan plane above the road (digital twin)
     # storage
     "log_interval_s": 1.0,         # one detection row per confirmed track per interval

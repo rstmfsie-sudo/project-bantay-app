@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, POS_NAME, RF, setSource, Track, TFLSensor, TwinMeta, useLive, useToast } from "../api";
+import { api, CAT_COLOR, CATEGORIES, Config, DATA_LABEL, fmt, lidarState, METHOD_LABEL, MLMeta, POS_NAME, RF, setSource, Track, TFLSensor, useLive, useToast } from "../api";
 import type { ViewProps } from "../App";
 import Iso3D, { Beam, Prim, roundedRect } from "../Iso3D";
 import { tfLuna } from "../sensors3d";
@@ -91,7 +91,7 @@ export function Overview({ go }: ViewProps) {
         <Stat k="360° LiDAR" dot={st.cls} v={st.label} s={s?.lidar.port ? `on ${s.lidar.port}` : "not plugged in"} />
         <Stat k="Turning at" tone="orange" v={s?.lidar.freq_measured ? `${s.lidar.freq_measured.toFixed(1)} Hz` : "—"} s="full sweeps per second" />
         <Stat k="Objects seen" tone="blue" v={s?.counts.objects ?? 0} s="since the app opened" />
-        <Stat k="Recognised" tone="green" v={s?.counts.classified ?? 0} s={s?.twin?.active ? "by the digital-twin model" : s?.ml.active ? "by your trained model" : "by shape rules"} />
+        <Stat k="Recognised" tone="green" v={s?.counts.classified ?? 0} s={s?.ml.active && s.ml.available ? "by the Random Forest" : s?.nn?.active && s.nn.available ? "by the neural network" : "by shape rules"} />
         <Stat k="Not sure yet" tone="purple" v={s?.counts.unknown ?? 0} s="better safe than wrong" />
         <Stat k="Right now" dot={alert.S === 2 ? "bad" : alert.S === 1 ? "warn" : "ok"}
           v={alert.S === 2 ? "Very close" : alert.S === 1 ? "Something near" : "All clear"} s={alert.reasons[0] ?? "nothing inside the warning zones"} />
@@ -347,6 +347,8 @@ export function DatasetManager({ go }: ViewProps) {
         click an object while you can see it with your own eyes (or on a synchronized video), then choose its true category.
         Each sample stores the cluster's points and its geometric and temporal features. Collect varied angles, distances and speeds.
       </div>
+      <div style={{ marginBottom: 14 }}><SyntheticDatasetCard /></div>
+      <h3 className="muted" style={{ font: "500 11.5px var(--mono)", letterSpacing: ".12em", textTransform: "uppercase", margin: "0 0 10px" }}>Real partition · labeled by you</h3>
       <div className="grid g4" style={{ marginBottom: 14 }}>{counts.map(({ c, n, o }) => <Stat key={c} k={c} v={n} s={c === "unknown" ? "not used for training" : `${o} objects · ${o < 3 || n < 5 ? "need 3+ objects, 5+ samples" : "ready"}`} />)}</div>
       <div className="card">
         <div className="spread" style={{ marginBottom: 10 }}>
@@ -381,16 +383,7 @@ const MODEL_INFO: Record<ModelKind, { name: string; blurb: string; minObjects: n
 
 function ModelPanel({ kind, meta, installed = true }: { kind: ModelKind; meta: MLMeta | null; installed?: boolean }) {
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
   const info = MODEL_INFO[kind];
-  const train = async () => {
-    setBusy(true);
-    try {
-      const m = await api<MLMeta>(`/api/ml/train?model=${kind}`, { method: "POST" });
-      toast({ title: `${info.name} trained`, body: `${m.version} · grouped CV accuracy ${(m.cv_accuracy * 100).toFixed(1)}%`, kind: "ok" });
-    } catch (e) { toast({ title: "Training not possible", body: (e as Error).message, kind: "warn" }); }
-    setBusy(false);
-  };
   const setValidated = async (v: boolean) => {
     await api("/api/ml/validated", { method: "POST", json: { value: v, model: kind } });
     toast({ title: v ? `${info.name} marked validated` : "Validation mark removed" });
@@ -402,16 +395,19 @@ function ModelPanel({ kind, meta, installed = true }: { kind: ModelKind; meta: M
           <h3>{info.name}</h3>
           <div className="muted" style={{ fontSize: 12.5, maxWidth: 520, marginTop: -4 }}>{info.blurb}</div>
         </div>
-        <button className="btn primary" disabled={busy || !installed} onClick={train}>
-          {!installed ? "PyTorch not installed" : busy ? (kind === "nn" ? "Training (can take a minute)…" : "Training…") : "Train from dataset"}</button>
+        {meta ? <span className="chip accent">trained on {DATA_LABEL[meta.training_data ?? "real"]}</span>
+          : !installed && <span className="chip">PyTorch not installed</span>}
       </div>
       {!meta ? (
         <div className="empty"><b>Not trained yet</b>
-          <span>Needs 2+ categories with {info.minObjects}+ different objects each. No accuracy is shown until a model is trained on real labeled samples.</span></div>
+          <span>Train it with the card above: on the digital twin now, on your real labels later ({info.minObjects}+ objects per category).</span></div>
       ) : (
         <>
           <div className="grid g4" style={{ margin: "14px 0" }}>
-            <Stat k="Grouped CV accuracy" v={`${(meta.cv_accuracy * 100).toFixed(1)}%`} s={`${meta.cv_folds}-fold, by ${meta.cv_grouped_by ?? "sample"}`} />
+            <Stat k={meta.training_data === "twin" ? "Accuracy on simulated objects" : "Grouped CV accuracy"} v={`${(meta.cv_accuracy * 100).toFixed(1)}%`}
+              s={`${meta.cv_folds}-fold, objects held out`} />
+            {meta.training_data !== "twin" && meta.training_data !== undefined && meta.training_data !== "real" && <Stat k="On real objects" tone="green"
+              v={meta.real_cv ? `${(meta.real_cv.accuracy * 100).toFixed(1)}%` : "—"} s={meta.real_cv ? `${meta.real_cv.samples} real samples, held out` : "no real samples yet"} />}
             <Stat k="Objects" v={Object.values(meta.objects ?? {}).reduce((a, b) => a + b, 0)} s={Object.entries(meta.objects ?? {}).map(([k, v]) => `${k} ${v}`).join(" · ")} />
             <Stat k="Status" v={meta.validated ? "Validated" : "Experimental"} s={meta.version} />
           </div>
@@ -443,6 +439,66 @@ function ModelPanel({ kind, meta, installed = true }: { kind: ModelKind; meta: M
   );
 }
 
+/** Train the Random Forest and/or the neural network on the chosen data, as one background job. */
+export function TrainCard({ height, perClass = 60, data: initial }: { height: number; perClass?: number; data?: "twin" | "real" | "both" }) {
+  const { status: s } = useLive();
+  const toast = useToast();
+  const realObjects = Object.entries(s?.dataset ?? {}).filter(([k]) => k !== "unknown").reduce((a, [, v]) => a + v.objects, 0);
+  const [data, setData] = useState<"twin" | "real" | "both">(initial ?? (realObjects >= 6 ? "both" : "twin"));
+  const [models, setModels] = useState<string[]>(["rf", "nn"]);
+  const job = s?.ml_job;
+  const start = async () => {
+    try {
+      await api("/api/ml/train", { method: "POST", json: { data, models, height_m: height, objects_per_class: perClass, activate: true } });
+      toast({ title: "Training started", body: "It runs in the background; the neural network takes a few minutes." });
+    } catch (e) { toast({ title: "Couldn't start training", body: (e as Error).message, kind: "warn" }); }
+  };
+  const toggle = (m: string) => setModels((ms) => (ms.includes(m) ? ms.filter((x) => x !== m) : [...ms, m]));
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div className="spread" style={{ alignItems: "flex-end", gap: 16 }}>
+        <div className="row" style={{ gap: 22 }}>
+          <label className="field">Learn from
+            <div className="seg">
+              <button className={data === "twin" ? "on" : ""} onClick={() => setData("twin")}>Digital twin</button>
+              <button className={data === "real" ? "on" : ""} disabled={!realObjects} onClick={() => setData("real")}>My real labels</button>
+              <button className={data === "both" ? "on" : ""} onClick={() => setData("both")}>Both</button>
+            </div></label>
+          <label className="field">Models
+            <div className="row">
+              <label className="row" style={{ cursor: "pointer" }}><input type="checkbox" checked={models.includes("rf")} onChange={() => toggle("rf")} /> Random Forest</label>
+              <label className="row" style={{ cursor: "pointer" }}><input type="checkbox" checked={models.includes("nn")} disabled={!s?.nn?.installed} onChange={() => toggle("nn")} /> Neural network</label>
+            </div></label>
+        </div>
+        <button className="btn primary" disabled={job?.running || !models.length} onClick={start}>
+          {job?.running ? `Training ${Math.round(job.progress * 100)}%` : "Train and switch to the better model"}</button>
+      </div>
+      {job?.running && <div className="bar" style={{ gridTemplateColumns: "1fr", marginTop: 12 }}>
+        <div className="track"><div className="fill" style={{ width: `${job.progress * 100}%`, background: "var(--accent)" }} /></div></div>}
+      <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>
+        {job && job.message !== "idle" ? job.message : `${realObjects} real labeled objects so far.`}
+        {" "}Simulated data teaches the shapes; only real labels tell you how it does on your road.
+      </div>
+    </div>
+  );
+}
+
+export function SyntheticDatasetCard() {
+  const { status: s } = useLive();
+  const d = s?.twin_dataset;
+  return (
+    <div className="card">
+      <div className="spread"><h3>Synthetic partition · digital twin</h3>{d && <a className="btn sm" href="/api/dataset/synthetic.csv">Export CSV</a>}</div>
+      {!d ? <div className="muted" style={{ fontSize: 12.5 }}>Not generated yet. Training on the digital twin creates it.</div> : <>
+        <table className="t"><thead><tr><th>Category</th><th>Objects</th><th>Samples</th></tr></thead>
+          <tbody>{d.classes.map((c) => <tr key={c}><td><Cat c={c} /></td><td className="mono">{d.objects[c]}</td><td className="mono">{d.samples[c]}</td></tr>)}</tbody></table>
+        <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>{d.version} · {d.generator} · scan plane {d.mount_height_m.toFixed(2)} m · created {fmt.time(d.created)}.
+          {" "}{d.note} "Unknown" is not a learned class: it's what a model answers when its confidence is below the threshold.</div>
+      </>}
+    </div>
+  );
+}
+
 export function MachineLearning() {
   const { status: s } = useLive();
   const [cfg, setCfg] = useState<Config | null>(null);
@@ -453,6 +509,7 @@ export function MachineLearning() {
   return (
     <>
       <Header title="Machine Learning" sub="Models that learn from the objects you label, and are always tested on objects they haven't seen." />
+      <TrainCard height={Number(cfg?.mount_height_m ?? 0.6)} />
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="spread">
           <h3 style={{ margin: 0 }}>Classifier in use</h3>
@@ -460,7 +517,6 @@ export function MachineLearning() {
             <button className={cfg?.classifier === "rules" ? "on" : ""} onClick={() => setClassifier("rules")}>Rule-based</button>
             <button className={cfg?.classifier === "ml" ? "on" : ""} disabled={!s?.ml.available} onClick={() => setClassifier("ml")}>Random Forest</button>
             <button className={cfg?.classifier === "nn" ? "on" : ""} disabled={!s?.nn?.available} onClick={() => setClassifier("nn")}>Neural network</button>
-            <button className={cfg?.classifier === "twin" ? "on" : ""} disabled={!s?.twin?.available} onClick={() => setClassifier("twin")}>Digital twin</button>
           </div>
         </div>
         <div className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
@@ -600,7 +656,7 @@ const FIELDS: { group: string; items: [string, string, number?][] }[] = [
     ["min_intensity", "Minimum intensity (0–255)", 1], ["background_enabled", "Use background subtraction"], ["background_margin_m", "Background margin (m)", 0.05], ["background_absorb_s", "Still object becomes background after (s)", 5]] },
   { group: "Clustering (DBSCAN)", items: [["dbscan_eps_m", "Neighbourhood ε (m)", 0.01], ["dbscan_min_samples", "Min samples", 1], ["min_cluster_points", "Min points per object", 1]] },
   { group: "Alerts", items: [["alert_sound", "Soft chime when something is close"], ["alert_volume", "Chime volume (0–1)", 0.05],
-    ["alert_light", "Gentle glow around the window"], ["pico_alerts", "Send alerts to the Pico LEDs and buzzer"]] },
+    ["alert_light", "Gentle glow around the window"]] },
   { group: "TF-Luna sensors (Pico W)", items: [["rf_enabled", "Use the three TF-Luna sensors"]] },
   { group: "Vehicle geometry (uncalibrated until measured)", items: [["geometry_calibrated", "I measured these on the real vehicle"],
     ["vehicle_length_m", "Vehicle length (m)", 0.05], ["vehicle_width_m", "Vehicle width (m)", 0.05],
@@ -650,43 +706,30 @@ export function Settings({ theme, setTheme }: ViewProps) {
 // ============================================================== DIGITAL TWIN
 type Preview = Record<string, { prims: Prim[]; slice: [number, number, number, number][] }>;
 export function DigitalTwin({ go }: ViewProps) {
-  const { status: s } = useLive();
-  const toast = useToast();
-  const [cfg, setCfg] = useState<Config | null>(null);
+  const [, setCfg] = useState<Config | null>(null);
   const [h, setH] = useState(0.6);
   const [n, setN] = useState(60);
   useEffect(() => { api<Config>("/api/config").then((c) => { setCfg(c); setH(Number(c.mount_height_m)); }); }, []);
   const prev = useFetch<Preview>(`/api/twin/preview?height_m=${h}`, [h]);
-  const job = s?.twin?.job, meta: TwinMeta | null = s?.twin?.meta ?? null;
   const saveH = async (v: number) => { setH(v); setCfg(await api<Config>("/api/config", { method: "PATCH", json: { mount_height_m: v } })); };
-  const train = async () => {
-    try { await api("/api/twin/train", { method: "POST", json: { height_m: h, objects_per_class: n } }); toast({ title: "Practising on the pretend road…", body: "This takes about a minute." }); }
-    catch (e) { toast({ title: "Couldn't start", body: (e as Error).message, kind: "warn" }); }
-  };
-  const use = async () => { setCfg(await api<Config>("/api/config", { method: "PATCH", json: { classifier: "twin" } })); toast({ title: "Now using the digital-twin model", kind: "ok" }); };
   return (
     <>
       <Header title="Digital Twin" sub="A simulated copy of your setup: the same LiDAR, a pretend road, and 3D models of cars, motorcycles, bicycles and people. The app practises on it so it can make a first guess before you've labeled anything real." />
       <div className="note" style={{ marginBottom: 14 }}>
-        <b>Be honest about what this is.</b> A model trained here learned from <i>simulated</i> scans. Its score below says how well it does on more simulation,
-        not on your real road. Label some real objects and the twin model is automatically checked against them, and that's the number to trust.
+        <b>Be honest about what this is.</b> Models trained here learn from <i>simulated</i> scans, and their live results are labelled "ML (digital twin)".
+        Their score says how well they do on more simulation, not on your real road. Train on "Both" once you've labeled real objects:
+        the score on real objects is the one to trust.
       </div>
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="spread" style={{ alignItems: "flex-end" }}>
-          <div className="row" style={{ gap: 22 }}>
-            <label className="field">How high is the LiDAR above the road?
-              <div className="row"><input type="range" min={0.2} max={1.6} step={0.05} value={h} onChange={(e) => setH(Number(e.target.value))} onPointerUp={() => saveH(h)} onKeyUp={() => saveH(h)} />
-                <b className="mono">{h.toFixed(2)} m</b></div></label>
-            <label className="field">Pretend objects per type
-              <div className="seg">{[30, 60, 120].map((v) => <button key={v} className={n === v ? "on" : ""} onClick={() => setN(v)}>{v}</button>)}</div></label>
-          </div>
-          <div className="row">
-            {meta && <button className="btn" disabled={cfg?.classifier === "twin"} onClick={use}>{cfg?.classifier === "twin" ? "In use" : "Use this model"}</button>}
-            <button className="btn primary" disabled={job?.running} onClick={train}>{job?.running ? `Practising ${Math.round(job.progress * 100)}%` : meta ? "Practise again" : "Train on the twin"}</button>
-          </div>
+        <div className="row" style={{ gap: 22 }}>
+          <label className="field">How high is the LiDAR above the road?
+            <div className="row"><input type="range" min={0.2} max={1.6} step={0.05} value={h} onChange={(e) => setH(Number(e.target.value))} onPointerUp={() => saveH(h)} onKeyUp={() => saveH(h)} />
+              <b className="mono">{h.toFixed(2)} m</b></div></label>
+          <label className="field">Pretend objects per type
+            <div className="seg">{[30, 60, 120].map((v) => <button key={v} className={n === v ? "on" : ""} onClick={() => setN(v)}>{v}</button>)}</div></label>
         </div>
-        {job?.message?.startsWith("failed") && <div className="note" style={{ marginTop: 10 }}>{job.message}</div>}
       </div>
+      <TrainCard height={h} perClass={n} data="twin" />
       <div className="grid g4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", marginBottom: 14 }}>
         {(["car", "motorcycle", "bicycle", "pedestrian"] as const).map((k) => (
           <div className="card" key={k} style={{ paddingBottom: 10 }}>
@@ -699,26 +742,14 @@ export function DigitalTwin({ go }: ViewProps) {
         ))}
       </div>
       <div className="faint" style={{ fontSize: 11.5, margin: "-6px 0 14px" }}>Orange is the LiDAR's scan plane: the only slice of each object the real sensor ever sees. These 3D shapes are simplified models, not measurements.</div>
-      {meta && <div className="grid g2">
+      <div className="grid g2">
+        <SyntheticDatasetCard />
         <div className="card">
-          <h3>How it did</h3>
-          <div className="grid g4" style={{ marginBottom: 10 }}>
-            <Stat k="On simulation" tone="blue" v={`${(meta.cv_accuracy * 100).toFixed(0)}%`} s="pretend objects it never saw" />
-            <Stat k="On your real labels" tone="green" v={meta.sim_to_real ? `${(meta.sim_to_real.accuracy * 100).toFixed(0)}%` : "—"}
-              s={meta.sim_to_real ? `${meta.sim_to_real.samples} real samples` : "label real objects to find out"} />
-          </div>
-          <div className="faint" style={{ fontSize: 11.5 }}>Trained at {meta.mount_height_m.toFixed(2)} m height · {meta.version}
-            {Math.abs(meta.mount_height_m - h) > 0.05 && <b style={{ color: "var(--warn)" }}> · your height is now {h.toFixed(2)} m: practise again</b>}</div>
+          <h3>Results</h3>
+          <div className="muted" style={{ fontSize: 12.5 }}>Accuracy, mix-ups and which model is in use are on the Machine Learning page.</div>
+          <button className="btn sm" style={{ marginTop: 10 }} onClick={() => go("ml")}>Open Machine Learning</button>
         </div>
-        <div className="card">
-          <h3>Mix-ups on simulation</h3>
-          <table className="t"><thead><tr><th>really \ guessed</th>{meta.classes.map((c) => <th key={c}>{c}</th>)}</tr></thead>
-            <tbody>{meta.confusion_matrix.map((row, i) => <tr key={i}><td><Cat c={meta.classes[i]} /></td>{row.map((v, j) => (
-              <td key={j} className="mono" style={{ background: i === j && v ? "color-mix(in srgb, var(--green) 22%, transparent)" : undefined }}>{v}</td>))}</tr>)}</tbody></table>
-        </div>
-      </div>}
-      {!meta && <div className="empty"><b>Not trained yet</b><span>Pick your mounting height and press <i>Train on the twin</i>.</span>
-        <button className="btn sm" onClick={() => go("ml")}>Or train on real labels instead</button></div>}
+      </div>
     </>
   );
 }

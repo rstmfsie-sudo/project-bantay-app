@@ -22,6 +22,17 @@ DET_COLS = ["id", "ts", "track_id", "category", "method", "confidence", "model_v
             "distance", "angle", "x", "y", "speed", "length", "n_points", "risk"]
 
 
+class _Result:
+    def __init__(self, rows, lastrowid):
+        self.rows, self.lastrowid = rows, lastrowid
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0] if self.rows else None
+
+
 class DB:
     def __init__(self, path=DB_FILE):
         self.lock = threading.Lock()
@@ -34,10 +45,13 @@ class DB:
             pass
 
     def _q(self, sql, args=()):
+        """Run one statement and fetch its rows INSIDE the lock: the connection is shared by several threads, and
+        reading a cursor after releasing the lock let another thread's statement wipe the result."""
         with self.lock:
             cur = self.con.execute(sql, args)
+            rows = cur.fetchall()
             self.con.commit()
-            return cur
+            return _Result(rows, cur.lastrowid)
 
     def add_detection(self, d: dict):
         self._q(f"INSERT INTO detections ({','.join(DET_COLS[1:])}) VALUES ({','.join('?' * 14)})",

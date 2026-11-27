@@ -40,7 +40,8 @@ export type Status = {
   alert_prefs: { sound: boolean; volume: number; light: boolean };
   rangefinders: { state: string; port: string | null; message: string; rate_hz: number; firmware: string | null;
     lines_ok: number; lines_bad: number; errors: string[]; last_t: number | null; connects: number; sensors: TFLSensor[] };
-  twin?: { available: boolean; active: boolean; meta: TwinMeta | null; job: { running: boolean; progress: number; message: string } };
+  twin_dataset: TwinDataset | null;
+  ml_job: MLJob;
   following: { track_id: number; label: string; samples: number }[];
 };
 export type MLMeta = {
@@ -49,6 +50,8 @@ export type MLMeta = {
   per_class: Record<string, { precision: number; recall: number; f1: number; samples: number }>;
   cv_folds: number; cv_accuracy: number; confusion_matrix: number[][]; feature_importance?: Record<string, number>;
   validated: boolean; trained_at: number; note: string;
+  training_data?: "real" | "twin" | "both";
+  real_cv?: { accuracy: number; samples: number; confusion_matrix: number[][] } | null;
 };
 export type Config = Record<string, number | string | boolean>;
 export type Alert = { L: number; R: number; S: number; reasons: string[]; monitor?: Monitor | null };
@@ -68,8 +71,12 @@ export type RF = {
 export const POS_NAME: Record<string, string> = { L: "Left", R: "Right", B: "Rear" };
 export const LEVEL_NAME = ["SAFE", "CAUTION", "WARNING", "DANGER"];
 export const LEVEL_COLOR = ["#8CC79A", "#E5B452", "#E58A52", "#D9644A"];
-export type TwinMeta = MLMeta & { mount_height_m: number; features: string[];
-  sim_to_real: { accuracy: number; samples: number; confusion_matrix: number[][] } | null };
+/** The saved synthetic (digital-twin) partition of the dataset. Never mixed into the real samples. */
+export type TwinDataset = { version: string; generator: string; mount_height_m: number; objects_requested_per_class: number;
+  created: number; classes: string[]; samples: Record<string, number>; objects: Record<string, number>; note: string };
+export type MLJob = { running: boolean; progress: number; message: string; data?: string; best?: string;
+  results: Record<string, { error?: string; version?: string; cv_accuracy?: number; real_cv?: { accuracy: number; samples: number } | null }> };
+export const DATA_LABEL: Record<string, string> = { twin: "digital twin (simulated)", real: "your real labels", both: "digital twin + your real labels" };
 
 export const CATEGORIES = ["car", "motorcycle", "bicycle", "pedestrian", "unknown"] as const;
 // Contrasting accents (blue / green / purple) next to the warm palette so categories never blur together.

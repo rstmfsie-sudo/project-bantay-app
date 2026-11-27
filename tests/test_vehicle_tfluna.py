@@ -72,7 +72,8 @@ def test_firmware_lines_are_accepted_by_the_app():
         msg = parse_line(fw.line(body))
         assert msg is not None, body
     assert checksum_ok(fw.boot_line()) and parse_line(fw.boot_line())["fw"] == fw.FW_VERSION
-    assert fw.parse_alert("!A,1,2,9") == (1, 2, 3) and fw.parse_alert("!A,x,1,1") is None
+    assert [fw.level_for(cm, "OK") for cm in (30, 80, 150, 500)] == [3, 2, 1, 0]
+    assert fw.level_for(30, "STALE") == 0 and fw.level_for(-1, "OK") == 0   # only fresh, valid readings warn
     assert fw.led_on(0, 123) == 0 and fw.buzzer_on(0, 0) is False
 
 

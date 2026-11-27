@@ -5,7 +5,7 @@ Pico -> PC (ASCII lines, XOR checksum of the text between '$' and '*'):
     $TFL,<seq>,<ms>,<id>,<pos>,<dist_cm>,<amp>,<status>*HH    per sensor, ~20 Hz
     $DIAG,<seq>,<ms>,<id>,<frames_ok>,<frames_bad>,<bytes>*HH   per sensor, 1 Hz
     $BOOT,<fw>,<id>:<pos>:<iface>:<pins>|...*HH                 at start, every 10 s
-PC -> Pico:  !A,<left>,<right>,<status>   levels 0 safe, 1 caution, 2 warning, 3 danger
+The app never writes to the Pico (unread input would fill its USB buffer and block both sides).
 
 A distance is only ever shown while it is FRESH (< STALE_S old) and the sensor reported status OK.
 """
@@ -120,8 +120,6 @@ class RangefinderLink(threading.Thread):
         self.sensors = {sid: SensorState(sid, name, pos) for sid, (name, pos) in SENSORS.items()}
         self._halt = threading.Event()
         self._ser = None
-        self._alert_sent: tuple | None = None
-        self._alert_t = 0.0
         self.lock = threading.Lock()
 
     # ------------------------------------------------------------------ public
@@ -178,17 +176,6 @@ class RangefinderLink(threading.Thread):
                 st.errors = (st.errors + [msg["text"]])[-5:]
                 log.warning("Pico reported: %s", msg["text"])
         return True
-
-    def send_alert(self, levels: tuple[int, int, int]):
-        """Forward alert levels (0..3) to the Pico. Sent on change and as a 1 s keep-alive."""
-        ser, now = self._ser, time.time()
-        if ser is None or (levels == self._alert_sent and now - self._alert_t < 1.0):
-            return
-        try:
-            ser.write(f"!A,{levels[0]},{levels[1]},{levels[2]}\n".encode())
-            self._alert_sent, self._alert_t = levels, now
-        except Exception:
-            pass
 
     @staticmethod
     def find_port(cfg_port: str) -> str | None:

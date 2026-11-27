@@ -52,8 +52,8 @@ def get_config():
 def patch_config(patch: dict):
     if "source" in patch and patch["source"] not in ("serial", "replay", "simulation"):
         raise HTTPException(400, "source must be serial, replay or simulation")
-    if "classifier" in patch and patch["classifier"] not in ("rules", "ml", "nn", "twin"):
-        raise HTTPException(400, "classifier must be rules, ml, nn or twin")
+    if "classifier" in patch and patch["classifier"] not in ("rules", "ml", "nn"):
+        raise HTTPException(400, "classifier must be rules, ml or nn")
     try:
         cfg = engine.cfg.update(patch)
     except (KeyError, ValueError, TypeError) as e:
@@ -206,35 +206,34 @@ def export_dataset_json():
 
 
 # ---------------------------------------------------------------- ML
-@app.post("/api/ml/train")
-def train(model: str = "rf"):
-    # unknown is not a class to learn; samples from before a feature was added are skipped
-    s = [x for x in engine.db.samples() if x["label"] != "unknown" and all(k in x["features"] for k in ML_FEATURES)]
-    X, y, g = [[x["features"][k] for k in ML_FEATURES] for x in s], [x["label"] for x in s], [x["object"] for x in s]
-    try:
-        if model == "nn":
-            return engine.nn.train([x["points"] for x in s], X, y, g)
-        return engine.ml.train(X, y, g)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
-class TwinTrain(BaseModel):
-    height_m: float = 0.6
+class TrainJob(BaseModel):
+    data: str = "twin"                 # real | twin | both
+    models: list[str] = ["rf", "nn"]
+    height_m: float = 0.6              # LiDAR scan-plane height used by the digital twin
     objects_per_class: int = 60
+    activate: bool = True              # switch the app to the better model when done
 
 
-@app.post("/api/twin/train")
-def twin_train(b: TwinTrain):
+@app.post("/api/ml/train")
+def train(b: TrainJob):
+    if b.data not in ("real", "twin", "both") or not set(b.models) <= {"rf", "nn"} or not b.models:
+        raise HTTPException(400, "data must be real, twin or both; models from rf, nn")
     if not 0.1 <= b.height_m <= 1.8 or not 10 <= b.objects_per_class <= 300:
         raise HTTPException(400, "height 0.1-1.8 m, 10-300 objects per class")
-    real = [{"fv": [s["features"][k] for k in ML_FEATURES], "label": s["label"]}
-            for s in engine.db.samples() if all(k in s["features"] for k in ML_FEATURES)]
     try:
-        engine.twin.start_training(b.height_m, b.objects_per_class, real)
+        return engine.start_ml_job(b.data, b.models, b.height_m, b.objects_per_class, b.activate)
     except ValueError as e:
         raise HTTPException(409, str(e))
-    return engine.twin.job
+
+
+@app.get("/api/dataset/synthetic.csv")
+def export_synthetic_csv():
+    from .twin import load_dataset
+    ds = load_dataset()
+    if not ds:
+        raise HTTPException(404, "No synthetic dataset yet: generate it on the Digital Twin page")
+    rows = [{"object": g, "label": lab, **dict(zip(ML_FEATURES, x))} for x, lab, g in zip(ds["X"], ds["y"], ds["groups"])]
+    return csv_response(rows, ["object", "label"] + ML_FEATURES, "bantay-synthetic-dataset.csv")
 
 
 @app.get("/api/twin/preview")

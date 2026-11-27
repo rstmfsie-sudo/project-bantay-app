@@ -126,7 +126,7 @@ def test_api_smoke():
         assert cl.patch("/api/config", json={"nope": 1}).status_code == 400
         assert cl.post("/api/lidar/frequency", json={"hz": 20}).status_code == 400
         assert cl.get("/api/detections").status_code == 200
-        assert cl.post("/api/ml/train").status_code == 400
+        assert cl.post("/api/ml/train", json={"data": "bogus"}).status_code == 400
 
 
 def test_label_and_follow_through_engine():

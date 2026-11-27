@@ -74,12 +74,11 @@ function Boot({ onDone }: { onDone: () => void }) {
       set(3, { label: "Checking what it has learned", state: "run" });
       await wait(250);
       const m = s!.ml;
-      const tw = s!.twin;
-      set(3, m.available
-        ? { label: "Trained model ready", state: "ok", msg: m.meta?.validated ? "Validated by you" : "Still experimental" }
-        : tw?.available
-          ? { label: "Digital-twin model ready", state: "ok", msg: "Learned from simulation; label real objects to check it" }
-          : { label: "Nothing learned yet", state: "warn", msg: "Using simple shape rules until you train a model" });
+      const nn = s!.nn, active = s!.ml.active && m.available ? m.meta : nn?.active && nn.available ? nn.meta : null;
+      const what = active?.training_data === "real" ? "learned from your labels" : active ? "learned from the digital twin (simulated)" : "";
+      set(3, active
+        ? { label: `${s!.ml.active ? "Random Forest" : "Neural network"} ready`, state: "ok", msg: what }
+        : { label: "Nothing learned yet", state: "warn", msg: "Using simple shape rules until you train a model" });
       await wait(700);
       if (!cancel) { setOut(true); setTimeout(onDone, 450); }
     })();
@@ -204,7 +203,8 @@ export default function App() {
               <span className="mono">{s ? `${(s.lidar.bytes_per_s / 1024).toFixed(1)} KB/s` : ""}</span>
               <span className="mono">{s?.processing.ms != null ? `${s.processing.ms.toFixed(1)} ms/scan` : ""}</span>
               <span className="sp" />
-              <span>{s?.twin?.active && s.twin.available ? "Digital-twin model" : s?.ml.active && s.ml.available ? `Trained model (${s.ml.meta?.validated ? "validated" : "experimental"})` : "Shape rules"}</span>
+              <span>{s?.ml.active && s.ml.available ? `Random Forest · ${s.ml.meta?.training_data === "real" ? "real labels" : "digital twin"}`
+                : s?.nn?.active && s.nn.available ? `Neural network · ${s.nn.meta?.training_data === "real" ? "real labels" : "digital twin"}` : "Shape rules"}</span>
               <span className="mono">up {s ? fmt.dur(s.uptime_s) : "—"}</span>
             </footer>
           </div>

@@ -17,7 +17,8 @@ from .config import DATA, Config
 from .db import DB
 from .pointnet import PointNetClassifier
 from .rangefinders import RangefinderLink
-from .twin import SimulationThread, TwinModel
+from . import twin
+from .twin import SimulationThread
 from . import vehicle
 from .processing import Background, process
 from .tracking import Tracker
@@ -34,7 +35,9 @@ class Engine:
         self.tracker = Tracker()
         self.ml = MLClassifier()
         self.nn = PointNetClassifier()
-        self.twin = TwinModel()
+        self.ml_job = {"running": False, "progress": 0.0, "message": "idle", "results": {}}
+        if self.cfg.get()["classifier"] == "twin":        # the separate twin model became Random Forest data="twin"
+            self.cfg.update({"classifier": "ml"})
         self.q: queue.Queue[Scan] = queue.Queue(maxsize=3)
         self.dropped = 0
         self.started = time.time()
@@ -119,13 +122,9 @@ class Engine:
         tracks = []
         use_ml = cfg["classifier"] == "ml" and self.ml.available
         use_nn = cfg["classifier"] == "nn" and self.nn.available
-        use_twin = cfg["classifier"] == "twin" and self.twin.available
         for tr in self.tracker.step(clusters, scan.t, cfg):
             d = self.tracker.describe(tr, cfg)
-            if use_twin:
-                tr.category, tr.confidence, tr.method = self.twin.predict(feature_vector(d), cfg["ml_min_confidence"])
-                tr.note = "digital-twin model (trained on simulation)"
-            elif use_nn:
+            if use_nn:
                 tr.category, tr.confidence, tr.method = self.nn.predict(tr.cluster["points"], feature_vector(d),
                                                                         cfg["ml_min_confidence"])
                 tr.note = "network probability (uncalibrated)"
@@ -145,7 +144,7 @@ class Engine:
                 self.db.add_detection({
                     "ts": scan.t, "track_id": tr.id, "category": tr.category, "method": tr.method,
                     "confidence": tr.confidence,
-                    "model_version": self.twin.meta["version"] if use_twin else self.nn.meta["version"] if use_nn else self.ml.meta["version"] if use_ml else "rules-v1",
+                    "model_version": self.nn.meta["version"] if use_nn else self.ml.meta["version"] if use_ml else "rules-v1",
                     "distance": d["range"], "angle": d["bearing"], "x": d["x"], "y": d["y"],
                     "speed": d["speed"], "length": d["max_length"],
                     "n_points": int(d["features"]["n_points"]), "risk": d["risk"]})
@@ -175,6 +174,70 @@ class Engine:
             time.sleep(3600)
             self.db.purge(self.cfg.get()["retention_days"])
             self._counted = dict(list(self._counted.items())[-5000:])   # bound memory on long runs
+
+    # ------------------------------------------------------------ machine learning
+    NO_INTENSITY = [i for i, n in enumerate(ML_FEATURES) if n != "mean_intensity"]   # the twin does not model intensity
+
+    def start_ml_job(self, data: str, models: list, height: float, per_class: int, activate: bool):
+        if self.ml_job.get("running"):
+            raise ValueError("Training is already running")
+        self.ml_job = {"running": True, "progress": 0.0, "message": "starting", "data": data, "results": {}}
+        threading.Thread(target=self._ml_job, args=(data, models, height, per_class, activate),
+                         daemon=True, name="ml-training").start()
+        return self.ml_job
+
+    def _ml_job(self, data, models, height, per_class, activate):
+        j = self.ml_job
+        try:
+            X, y, g, P, real = [], [], [], [], []
+            if data in ("twin", "both"):
+                m = twin.dataset_meta()
+                if not m or abs(m["mount_height_m"] - height) > 1e-6 or m["objects_requested_per_class"] != per_class:
+                    j["message"] = "simulating the digital twin dataset"
+                    twin.build_dataset(height, per_class, progress=lambda f: j.update(progress=0.4 * f))
+                ds = twin.load_dataset()
+                X += ds["X"]; y += ds["y"]; g += ds["groups"]; P += ds["points"]; real += [False] * len(ds["y"])
+            if data in ("real", "both"):
+                s = [x for x in self.db.samples() if x["label"] != "unknown" and all(k in x["features"] for k in ML_FEATURES)]
+                X += [[x["features"][k] for k in ML_FEATURES] for x in s]
+                y += [x["label"] for x in s]; g += [x["object"] for x in s]; P += [x["points"] for x in s]
+                real += [True] * len(s)
+            if not y:
+                raise ValueError("no training data yet: label real objects, or use the digital twin")
+            cols = None if data == "real" else self.NO_INTENSITY
+            res = {}
+            if "rf" in models:
+                j.update(message="training the Random Forest", progress=0.42)
+                try:
+                    res["rf"] = self.ml.train(X, y, g, cols=cols, real=real, data=data)
+                except ValueError as e:
+                    res["rf"] = {"error": str(e)}
+            if "nn" in models:
+                if not self.nn.installed:
+                    res["nn"] = {"error": "PyTorch is not installed"}
+                else:
+                    j.update(message="training the neural network (a few minutes on the CPU)", progress=0.5)
+                    try:
+                        res["nn"] = self.nn.train(P, X, y, g, cols=cols, real=real, data=data,
+                                                  progress=lambda f: j.update(progress=0.5 + 0.48 * f))
+                    except ValueError as e:
+                        res["nn"] = {"error": str(e)}
+            # judge on real objects whenever they took part, otherwise on (simulated) grouped CV
+            score = lambda m: (m.get("real_cv") or {}).get("accuracy", m.get("cv_accuracy", -1))
+            ok = {k: m for k, m in res.items() if "error" not in m}
+            best = max(ok, key=lambda k: score(ok[k])) if ok else None
+            if activate and best:
+                self.cfg.update({"classifier": "ml" if best == "rf" else "nn"})
+            summary = {k: ({"error": m["error"]} if "error" in m else
+                           {"version": m["version"], "cv_accuracy": m["cv_accuracy"], "real_cv": m.get("real_cv")})
+                       for k, m in res.items()}
+            name = {"rf": "Random Forest", "nn": "neural network"}.get(best)
+            j.update(running=False, progress=1.0, results=summary, best=best,
+                     message=(f"done: now using the {name}" if activate and best else "done") if best else
+                     "nothing trained: " + "; ".join(m["error"] for m in res.values() if "error" in m))
+        except Exception as e:
+            log.exception("training failed")
+            j.update(running=False, message=f"failed: {e}")
 
     # ------------------------------------------------------------ alerts
     TRACK_LEVEL = {"CLEAR": 0, "CAUTION": 1, "WARNING": 2}   # time-to-collision risk of tracked objects
@@ -206,15 +269,19 @@ class Engine:
         return {"L": L, "R": R, "S": S, "reasons": reasons[:4], "monitor": mon}
 
     def _alert_loop(self):
+        """Vehicle monitoring at 10 Hz. Must never stop: an exception is logged and the next cycle runs.
+        (The Pico drives its own LEDs/buzzer from its own sensors; the app never writes to it.)"""
         while True:
             time.sleep(0.1)
-            cfg, now = self.cfg.get(), time.time()
-            a = self.compute_alert(cfg, self.frame, self.rf.readings(now), now)
-            if (a["L"], a["R"], a["S"]) != (self.alert["L"], self.alert["R"], self.alert["S"]):
-                self.alert_seq += 1
-            self.alert = a
-            if cfg["pico_alerts"]:
-                self.rf.send_alert((a["L"], a["R"], a["S"]))
+            try:
+                cfg, now = self.cfg.get(), time.time()
+                a = self.compute_alert(cfg, self.frame, self.rf.readings(now), now)
+                if (a["L"], a["R"], a["S"]) != (self.alert["L"], self.alert["R"], self.alert["S"]):
+                    self.alert_seq += 1
+                self.alert = a
+            except Exception:
+                log.exception("vehicle monitoring cycle failed")
+                time.sleep(1)
 
     def rf_frame(self):
         """TF-Luna states with their mounting geometry (plot frame), the vehicle outline, and the monitor result."""
@@ -316,8 +383,8 @@ class Engine:
             "background": {"ready": self.bg.ready, "progress": self.bg.progress, "enabled": cfg["background_enabled"],
                            "absorb_s": cfg["background_absorb_s"]},
             "ml": {"available": self.ml.available, "meta": self.ml.meta, "active": cfg["classifier"] == "ml"},
-            "twin": {"available": self.twin.available, "meta": self.twin.meta, "job": self.twin.job,
-                     "active": cfg["classifier"] == "twin"},
+            "twin_dataset": twin.dataset_meta(),
+            "ml_job": self.ml_job,
             "rangefinders": {**self.rf.status.__dict__, "sensors": self.rf.views()},
             "alert": self.alert,
             "alert_prefs": {"sound": cfg["alert_sound"], "volume": cfg["alert_volume"], "light": cfg["alert_light"]},

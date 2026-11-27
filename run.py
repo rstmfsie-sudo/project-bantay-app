@@ -37,6 +37,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 if not (ROOT / "frontend" / "dist" / "index.html").exists():
     print("Frontend not built. Run:  cd frontend && npm install && npm run build")
 
+threading.excepthook = lambda a: logging.getLogger("bantay").error(
+    "thread %s crashed", a.thread.name if a.thread else "?", exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
 from backend.app import app, engine  # noqa: E402  (import after logging is configured)
 
 url = f"http://127.0.0.1:{args.port}"

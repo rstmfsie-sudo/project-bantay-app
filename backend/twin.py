@@ -24,8 +24,6 @@ from .config import DATA, DEFAULTS
 from .processing import Background, process
 from .tracking import Tracker
 
-MODEL_FILE = DATA / "models" / "twin.joblib"
-META_FILE = DATA / "models" / "twin.json"
 CLASSES = ["car", "motorcycle", "bicycle", "pedestrian"]
 SCAN_HZ = 6.0
 STEP_DEG = 0.54
@@ -196,100 +194,61 @@ def warm_background(cfg):
 
 
 def generate(height: float, per_class: int, seed=0, progress=None):
-    """Simulated dataset: X (features), y (labels), groups (object ids)."""
+    """Simulated dataset: X (features), y (labels), groups (object ids), points (each sample's 2D points)."""
     cfg = dict(DEFAULTS, angle_offset_deg=0.0, mirror=True)
     rng = np.random.default_rng(seed)
     bg = warm_background(cfg)
-    X, y, g = [], [], []
+    X, y, g, P = [], [], [], []
     total = per_class * len(CLASSES)
     for ci, kind in enumerate(CLASSES):
         for i in range(per_class):
-            for fv, _pts in simulate_pass(kind, height, rng, cfg, bg):
-                X.append(fv); y.append(kind); g.append(f"{kind}-{i}")
+            for fv, pts in simulate_pass(kind, height, rng, cfg, bg):
+                X.append(fv); y.append(kind); g.append(f"twin:{kind}-{i}"); P.append(pts)
             if progress:
                 progress((ci * per_class + i + 1) / total)
-    return X, y, g
+    return X, y, g, P
 
 
-# ---------------------------------------------------------------- model
-class TwinModel:
-    """Random Forest trained only on digital-twin data. Intensity is excluded (the twin does not model it)."""
+# ---------------------------------------------------------------- the saved synthetic dataset
+DATASET_FILE = DATA / "datasets" / "twin_dataset.joblib"
+GENERATOR = "bantay-twin-1"     # bump when the simulator changes, so old datasets are regenerated
 
-    def __init__(self):
-        self.model, self.meta, self.cols = None, None, None
-        self.job = {"running": False, "progress": 0.0, "message": "idle"}
-        self.load()
 
-    @property
-    def available(self):
-        return self.model is not None
+def build_dataset(height: float, per_class: int, progress=None, seed=0) -> dict:
+    """Generate and SAVE the synthetic partition (kept apart from the researcher's real samples)."""
+    import joblib
+    X, y, g, P = generate(height, per_class, seed=seed, progress=progress)
+    y_arr, g_arr = np.asarray(y), np.asarray(g)
+    meta = {"version": time.strftime("twinset-%Y%m%d-%H%M%S"), "generator": GENERATOR, "seed": seed,
+            "mount_height_m": height, "objects_requested_per_class": per_class, "created": time.time(),
+            "classes": CLASSES, "samples": {c: int((y_arr == c).sum()) for c in CLASSES},
+            "objects": {c: len(set(g_arr[y_arr == c])) for c in CLASSES},
+            "note": "SIMULATED scans from the digital twin. Never mixed into the real dataset."}
+    DATASET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump({"X": X, "y": y, "groups": g, "points": P, "meta": meta}, DATASET_FILE)
+    DATASET_FILE.with_suffix(".json").write_text(json.dumps(meta, indent=2))
+    return meta
 
-    def load(self):
-        if MODEL_FILE.exists() and META_FILE.exists():
-            try:
-                import joblib
-                self.model, self.meta = joblib.load(MODEL_FILE), json.loads(META_FILE.read_text())
-                self.cols = self.meta["feature_index"]
-            except Exception:
-                self.model = self.meta = None
 
-    def predict(self, fv, min_conf):
-        p = self.model.predict_proba([[fv[i] for i in self.cols]])[0]
-        k = int(np.argmax(p))
-        return (self.model.classes_[k] if p[k] >= min_conf else "unknown"), float(p[k]), "ml_synthetic"
+def dataset_meta() -> dict | None:
+    """Metadata of the saved synthetic partition (cheap: does not load the samples)."""
+    f = DATASET_FILE.with_suffix(".json")
+    try:
+        m = json.loads(f.read_text())
+        return m if m.get("generator") == GENERATOR else None
+    except (OSError, ValueError):
+        return None
 
-    def start_training(self, height, per_class, real_samples):
-        if self.job["running"]:
-            raise ValueError("Already training")
-        self.job = {"running": True, "progress": 0.0, "message": "simulating"}
-        threading.Thread(target=self._train, args=(height, per_class, real_samples), daemon=True).start()
 
-    def _train(self, height, per_class, real_samples):
-        try:
-            self.meta = self.train(height, per_class, real_samples,
-                                   progress=lambda f: self.job.update(progress=0.9 * f))
-            self.job = {"running": False, "progress": 1.0, "message": "done"}
-        except Exception as e:
-            self.job = {"running": False, "progress": 0.0, "message": f"failed: {e}"}
-
-    def train(self, height, per_class, real_samples=(), progress=None):
-        import joblib
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
-        from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
-        from .classify import ML_FEATURES
-
-        cols = [i for i, n in enumerate(ML_FEATURES) if n != "mean_intensity"]
-        X, y, g = generate(height, per_class, progress=progress)
-        X, y, g = np.asarray(X)[:, cols], np.asarray(y), np.asarray(g)
-        clf = RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=0)
-        pred = cross_val_predict(clf, X, y, groups=g, cv=StratifiedGroupKFold(5, shuffle=True, random_state=0))
-        clf.fit(X, y)
-        cls = clf.classes_.tolist()
-        pr, rc, f1, _ = precision_recall_fscore_support(y, pred, labels=cls, zero_division=0)
-        meta = {
-            "version": time.strftime("twin-%Y%m%d-%H%M%S"), "mount_height_m": height,
-            "algorithm": "RandomForestClassifier trained on digital-twin scans",
-            "classes": cls, "features": [ML_FEATURES[i] for i in cols], "feature_index": cols,
-            "samples": {c: int((y == c).sum()) for c in cls},
-            "objects": {c: len(set(g[y == c])) for c in cls},   # objects the simulated sensor actually saw
-            "cv_folds": 5, "cv_grouped_by": "simulated object", "cv_accuracy": float(accuracy_score(y, pred)),
-            "confusion_matrix": confusion_matrix(y, pred, labels=cls).tolist(),
-            "per_class": {c: {"precision": float(pr[i]), "recall": float(rc[i]), "f1": float(f1[i]),
-                              "samples": int((y == c).sum())} for i, c in enumerate(cls)},
-            "sim_to_real": None, "validated": False, "trained_at": time.time(),
-            "note": "Accuracy measured on SIMULATED objects only. Real-world accuracy is unknown until checked on real labels.",
-        }
-        real = [(s["fv"], s["label"]) for s in real_samples if s["label"] in cls]
-        if real:
-            Xr = np.asarray([[fv[i] for i in cols] for fv, _ in real]); yr = np.asarray([lab for _, lab in real])
-            pr_ = clf.predict(Xr)
-            meta["sim_to_real"] = {"accuracy": float(accuracy_score(yr, pr_)), "samples": len(yr),
-                                   "confusion_matrix": confusion_matrix(yr, pr_, labels=cls).tolist()}
-        joblib.dump(clf, MODEL_FILE)
-        META_FILE.write_text(json.dumps(meta, indent=2))
-        self.model, self.cols = clf, cols
-        return meta
+def load_dataset() -> dict | None:
+    import joblib
+    if not DATASET_FILE.exists():
+        return None
+    try:
+        d = joblib.load(DATASET_FILE)
+        return d if d.get("meta", {}).get("generator") == GENERATOR else None
+    except Exception:
+        return None
 
 
 def preview(height: float) -> dict:

@@ -28,6 +28,13 @@ OBJECT_FEATURES = ["length_m", "width_m", "linearity", "n_segments", "coverage",
 TRACK_FEATURES = ["track_max_length_m", "track_speed_mps"]
 ML_FEATURES = OBJECT_FEATURES + TRACK_FEATURES
 MIN_OBJECTS = 3   # distinct tracked objects per category needed for grouped cross-validation
+NOTES = {
+    "real": "Grouped cross-validation on the researcher's own samples. Not field-validated until marked so.",
+    "twin": "Trained and cross-validated on SIMULATED digital-twin objects only. Real-world accuracy is unknown "
+            "until it is checked against real labeled objects.",
+    "both": "Trained on simulated twin objects plus the researcher's real samples. 'Real objects' accuracy is "
+            "measured on real objects held out of each fold; it is the number to trust.",
+}
 MODEL_FILE = DATA / "models" / "classifier.joblib"
 META_FILE = DATA / "models" / "classifier.json"
 
@@ -49,6 +56,23 @@ def rule_classify(track: dict) -> tuple[str, str]:
     if L < PEDESTRIAN_MAX_LENGTH and v is not None and v < PEDESTRIAN_MAX_SPEED:
         return "pedestrian", "small cross-section, walking speed"
     return "unknown", "insufficient evidence"
+
+
+def method_for(meta: dict) -> str:
+    """Live label: any simulated training data -> "ml_synthetic"; real only -> experimental/validated."""
+    if meta.get("training_data", "real") != "real":
+        return "ml_synthetic"
+    return "ml_validated" if meta.get("validated") else "ml_experimental"
+
+
+def real_only_score(y, pred, real, labels) -> dict | None:
+    """Accuracy on the REAL objects alone, from grouped-CV predictions (each was held out of its fold)."""
+    if real is None or not np.any(real):
+        return None
+    from sklearn.metrics import accuracy_score, confusion_matrix
+    yr, pr = np.asarray(y)[real], np.asarray(pred)[real]
+    return {"accuracy": float(accuracy_score(yr, pr)), "samples": int(real.sum()),
+            "confusion_matrix": confusion_matrix(yr, pr, labels=labels).tolist()}
 
 
 def feature_vector(track: dict) -> list[float]:
@@ -76,11 +100,12 @@ class MLClassifier:
         return self.model is not None
 
     def predict(self, track: dict, min_conf: float) -> tuple[str, float, str]:
-        p = self.model.predict_proba([feature_vector(track)])[0]
+        fv = feature_vector(track)
+        cols = self.meta.get("feature_index") or range(len(fv))
+        p = self.model.predict_proba([[fv[i] for i in cols]])[0]
         k = int(np.argmax(p))
         cat, conf = self.model.classes_[k], float(p[k])
-        method = "ml_validated" if self.meta.get("validated") else "ml_experimental"
-        return (cat if conf >= min_conf else "unknown"), conf, method
+        return (cat if conf >= min_conf else "unknown"), conf, method_for(self.meta)
 
     def set_validated(self, value: bool):
         if not self.meta:
@@ -88,22 +113,27 @@ class MLClassifier:
         self.meta["validated"] = bool(value)
         META_FILE.write_text(json.dumps(self.meta, indent=2))
 
-    def train(self, X: list[list[float]], y: list[str], groups: list[str]) -> dict:
+    def train(self, X: list[list[float]], y: list[str], groups: list[str], cols=None, real=None,
+              data: str = "real") -> dict:
         """Random Forest, evaluated with cross-validation GROUPED BY OBJECT: all samples of one tracked
         object stay in the same fold, so the score is never inflated by testing on frames of an object
-        the model was trained on. Reports only measured numbers."""
+        the model was trained on. Reports only measured numbers.
+        cols: feature columns to use; real: bool mask of real rows (for the real-only score);
+        data: "real" | "twin" | "both" (what it learned from, shown in the app)."""
         from sklearn.ensemble import RandomForestClassifier
         from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
         from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 
-        y, groups, X = np.asarray(y), np.asarray(groups), np.asarray(X, float)
+        cols = list(range(len(ML_FEATURES))) if cols is None else list(cols)
+        y, groups, X = np.asarray(y), np.asarray(groups), np.asarray(X, float)[:, cols]
+        real = np.full(len(y), data == "real") if real is None else np.asarray(real, bool)
         objects = {str(c): len(set(groups[y == c])) for c in np.unique(y)}
         usable = [c for c in objects if objects[c] >= MIN_OBJECTS and (y == c).sum() >= 5]
         if len(usable) < 2:
             raise ValueError(f"Need at least 2 categories, each with 5+ samples from {MIN_OBJECTS}+ different "
                              f"objects (objects per category now: {objects})")
         keep = np.isin(y, usable)
-        X, y, groups = X[keep], y[keep], groups[keep]
+        X, y, groups, real = X[keep], y[keep], groups[keep], real[keep]
         k = int(min(5, min(objects[c] for c in usable)))
         clf = RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=0)
         pred = cross_val_predict(clf, X, y, groups=groups,
@@ -114,16 +144,17 @@ class MLClassifier:
         meta = {
             "version": time.strftime("rf-%Y%m%d-%H%M%S"),
             "algorithm": "RandomForestClassifier(n_estimators=200, class_weight=balanced)",
-            "features": ML_FEATURES, "classes": cls,
+            "features": [ML_FEATURES[i] for i in cols], "feature_index": cols, "classes": cls,
+            "training_data": data, "real_cv": real_only_score(y, pred, real if data != "real" else None, cls),
             "samples": dict(zip(*[a.tolist() for a in np.unique(y, return_counts=True)])),
             "objects": {c: int(objects[c]) for c in cls},
             "cv_folds": k, "cv_grouped_by": "tracked object", "cv_accuracy": float(accuracy_score(y, pred)),
             "per_class": {c: {"precision": float(pr[i]), "recall": float(rc[i]), "f1": float(f1[i]),
                               "samples": int(sup[i])} for i, c in enumerate(cls)},
             "confusion_matrix": confusion_matrix(y, pred, labels=cls).tolist(),
-            "feature_importance": dict(zip(ML_FEATURES, np.round(clf.feature_importances_, 4).tolist())),
+            "feature_importance": dict(zip([ML_FEATURES[i] for i in cols], np.round(clf.feature_importances_, 4).tolist())),
             "validated": False, "trained_at": time.time(),
-            "note": "Grouped cross-validation on the researcher's own samples. Not field-validated until marked so.",
+            "note": NOTES[data],
         }
         joblib.dump(clf, MODEL_FILE)
         META_FILE.write_text(json.dumps(meta, indent=2))

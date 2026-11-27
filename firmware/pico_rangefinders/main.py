@@ -24,19 +24,23 @@
 #       id 1/2/3, pos L/R/B (rear), dist_cm -1 if invalid, amp -1 if none
 #       status OK | WEAK | STALE (no valid frame for 300 ms) | NODATA (no byte ever) | BADFRAMES (bytes, no valid frame)
 #   $DIAG,<seq>,<ms>,<id>,<frames_ok>,<frames_bad>,<bytes>*HH      once per second per sensor
-# FROM THE APP:  !A,<left>,<right>,<status>     levels 0 safe, 1 caution, 2 warning, 3 danger
+# NO INPUT FROM THE APP: the Pico computes its own warning LEDs / buzzer from its TF-Luna distances (below), so
+# it keeps warning even without the PC. The app never writes to the Pico: data the firmware does not read would
+# fill the USB receive buffer, block the PC's write, and stop Ctrl-C from reaching the REPL (Thonny / mpremote).
 #
 # STATUS: protocol/parsing logic is unit-tested on a PC and compiles with mpy-cross. Uploaded to the Pico on
 # 2026-11-27; its live output was not yet observed (devices were unplugged right after the upload).
 # Install: close the BANTAY app, open Thonny, File > Save as > Raspberry Pi Pico > main.py, reset the Pico.
 
-FW_VERSION = "2.0"
+FW_VERSION = "2.1"
 FRAME_LEN = 9
 STALE_MS = 300
 PERIOD_MS = 50
 DIAG_MS = 1000
 BOOT_MS = 10000
-ALERT_TIMEOUT_MS = 3000
+# warning levels from a sensor's own distance (cm): DANGER / WARNING / CAUTION. Research values, not certified;
+# the same defaults as the app's Settings (prox_danger_m / prox_warning_m / prox_caution_m).
+DANGER_CM, WARNING_CM, CAUTION_CM = 50, 100, 200
 BUZZER_VOLUME = 1500            # PWM duty 0..65535 (~2 %): quiet on a passive piezo. 0 = silent
 BUZZER_HZ = 2400
 
@@ -112,15 +116,17 @@ class TFLunaParser:
         return self.cm, self.amp, "OK"
 
 
-def parse_alert(text):
-    """'!A,l,r,s' -> (l, r, s) clamped to 0..3, or None."""
-    parts = text.strip().split(",")
-    if len(parts) != 4 or parts[0] != "!A":
-        return None
-    try:
-        return tuple(max(0, min(3, int(p))) for p in parts[1:])
-    except ValueError:
-        return None
+def level_for(cm, status):
+    """0 safe, 1 caution, 2 warning, 3 danger from one TF-Luna reading; only a valid, fresh reading can warn."""
+    if status != "OK" or cm < 0:
+        return 0
+    if cm <= DANGER_CM:
+        return 3
+    if cm <= WARNING_CM:
+        return 2
+    if cm <= CAUTION_CM:
+        return 1
+    return 0
 
 
 def boot_line():
@@ -148,9 +154,7 @@ def buzzer_on(level, now_ms):
 
 # ------------------------------------------------------------------ hardware (only runs on the Pico)
 def main():
-    import sys
     import time
-    import select
     from machine import I2C, Pin, UART, PWM
 
     class HwUart:
@@ -190,11 +194,7 @@ def main():
     buzzer = PWM(Pin(15))
     buzzer.freq(BUZZER_HZ)
     buzzer.duty_u16(0)
-    alert = [0, 0, 0]
-    last_alert = time.ticks_ms()
-    poll = select.poll()
-    poll.register(sys.stdin, select.POLLIN)
-    inbuf = ""
+    levels = {1: 0, 2: 0, 3: 0}
     seq = 0
     t0 = time.ticks_ms()
     next_out, next_diag, next_boot, next_i2c = t0, t0, time.ticks_add(t0, BOOT_MS), t0
@@ -214,22 +214,14 @@ def main():
                         parsers[sid].feed(data, now)
             except Exception:
                 pass
-        while poll.poll(0):              # alert levels from the app (non-blocking)
-            ch = sys.stdin.read(1)
-            if ch == "\n":
-                a = parse_alert(inbuf)
-                inbuf = ""
-                if a:
-                    alert[0], alert[1], alert[2] = a
-                    last_alert = now
-            elif len(inbuf) < 40:
-                inbuf += ch
-        if time.ticks_diff(now, last_alert) > ALERT_TIMEOUT_MS:
-            alert[0] = alert[1] = alert[2] = 0
-        leds["L"].value(led_on(alert[0], now))
-        leds["R"].value(led_on(alert[1], now))
-        leds["S"].value(led_on(alert[2], now))
-        buzzer.duty_u16(BUZZER_VOLUME if buzzer_on(alert[2], now) else 0)
+        for s_ in SENSORS:                # warning levels from the Pico's own sensors
+            cm, _amp, st = parsers[s_[0]].reading(now, time.ticks_diff)
+            levels[s_[0]] = level_for(cm, st)
+        overall = max(levels.values())
+        leds["L"].value(led_on(levels[1], now))
+        leds["R"].value(led_on(levels[2], now))
+        leds["S"].value(led_on(overall, now))         # status LED also covers the rear sensor
+        buzzer.duty_u16(BUZZER_VOLUME if buzzer_on(overall, now) else 0)
 
         if time.ticks_diff(now, next_out) >= 0:
             next_out = time.ticks_add(now, PERIOD_MS)
