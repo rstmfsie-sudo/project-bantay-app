@@ -104,7 +104,12 @@ export default function LiveScan() {
                 <span className="chip">{METHOD_LABEL[track.method]}</span>
               </div>
               <div className="kv" style={{ fontSize: 12.5 }}>
-                <span>Distance</span><span>{fmt.m(track.range)}</span>
+                <span>Distance</span><span>{fmt.m(track.range_fused ?? track.range)}</span>
+                {track.fusion && <>
+                  <span>LiDAR only</span><span>{fmt.m(track.range)}</span>
+                  <span>TF-Luna {track.fusion.sensor}</span><span>{fmt.m(track.fusion.tfl_m)} ({track.fusion.delta_m >= 0 ? "+" : ""}{track.fusion.delta_m.toFixed(2)} m vs LiDAR)</span>
+                  <span>Combined</span><span>{track.fusion.status === "confirmed" ? `confirmed${track.fusion.simulated ? " (simulated sensor)" : ""}` : "mismatch: TF-Luna sees something else"}</span>
+                </>}
                 <span>Bearing</span><span>{fmt.deg(track.bearing)}</span>
                 <span>Max extent</span><span>{fmt.m(track.max_length)}</span>
                 <span>Points</span><span>{track.features.n_points}</span>

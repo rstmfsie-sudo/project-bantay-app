@@ -6,6 +6,8 @@ export type Track = {
   duration: number; age: number; missed: number; max_length: number; features: Record<string, number>;
   category: string; method: string; confidence: number | null; note: string;
   trail: [number, number][]; box: [number, number, number, number]; cluster_id: number;
+  range_fused: number | null;   // LiDAR range corrected by a TF-Luna beam that crossed the object
+  fusion: { sensor: string; tfl_m: number; lidar_m: number; delta_m: number; status: "confirmed" | "mismatch"; simulated: boolean } | null;
 };
 export type Frame = {
   t: number; n_raw: number; n_valid: number; n_foreground: number; source: "serial" | "replay" | "simulation";

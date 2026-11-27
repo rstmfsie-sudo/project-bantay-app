@@ -20,6 +20,7 @@ from .rangefinders import RangefinderLink
 from . import twin
 from .twin import SimulationThread
 from . import vehicle
+from .fusion import fuse
 from .processing import Background, process
 from .tracking import Tracker
 from .ydlidar import LidarDriver, Scan
@@ -120,10 +121,13 @@ class Engine:
             self._record(scan, cfg)   # never re-record a replay, never record simulation
         frame, clusters = process(scan, cfg, self.bg)
         tracks = []
-        use_ml = cfg["classifier"] == "ml" and self.ml.available
+        geom, tfl = vehicle.sensor_geometry(cfg), self.rf.readings() if cfg["rf_enabled"] else {}
+        use_ml =cfg["classifier"] == "ml" and self.ml.available
         use_nn = cfg["classifier"] == "nn" and self.nn.available
         for tr in self.tracker.step(clusters, scan.t, cfg):
             d = self.tracker.describe(tr, cfg)
+            d["fusion"] = fz = None if replay else fuse(d, cfg, geom, tfl)   # a replayed scan has no matching live beam
+            d["range_fused"] = d["range"] + fz["delta_m"] if fz and fz["status"] == "confirmed" else None
             if use_nn:
                 tr.category, tr.confidence, tr.method = self.nn.predict(tr.cluster["points"], feature_vector(d),
                                                                         cfg["ml_min_confidence"])
@@ -145,7 +149,7 @@ class Engine:
                     "ts": scan.t, "track_id": tr.id, "category": tr.category, "method": tr.method,
                     "confidence": tr.confidence,
                     "model_version": self.nn.meta["version"] if use_nn else self.ml.meta["version"] if use_ml else "rules-v1",
-                    "distance": d["range"], "angle": d["bearing"], "x": d["x"], "y": d["y"],
+                    "distance": d["range"], "range_fused": d["range_fused"], "angle": d["bearing"], "x": d["x"], "y": d["y"],
                     "speed": d["speed"], "length": d["max_length"],
                     "n_points": int(d["features"]["n_points"]), "risk": d["risk"]})
         live = {tr.id for tr in self.tracker.tracks}

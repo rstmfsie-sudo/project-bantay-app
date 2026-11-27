@@ -75,6 +75,7 @@ DEFAULTS = {
     "prox_danger_m": 0.5,
     "prox_warning_m": 1.0,
     "prox_caution_m": 2.0,
+    "fusion_tol_m": 0.30,          # LiDAR vs TF-Luna distance agreement for a fused object
     # alerts
     "alert_sound": True,           # soft chime in the app
     "alert_volume": 0.3,           # 0..1 (kept quiet: max gain is low)

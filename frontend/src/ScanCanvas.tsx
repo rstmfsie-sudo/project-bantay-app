@@ -181,7 +181,7 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
               ctx.beginPath(); ctx.moveTo(sx(t.x), sy(t.y)); ctx.lineTo(sx(t.x) + Math.cos(hr) * L, sy(t.y) - Math.sin(hr) * L); ctx.stroke();
             }
             if (layers.labels) {
-              const label = `#${t.id} ${t.category}  ${t.range.toFixed(1)} m`;
+              const label = `#${t.id} ${t.category}  ${(t.range_fused ?? t.range).toFixed(t.range_fused != null ? 2 : 1)} m${t.range_fused != null ? " LiDAR+TF" : t.fusion ? " ⚠ TF≠LiDAR" : ""}`;
               ctx.font = `600 11px ${css("--font")}`;
               const tw = ctx.measureText(label).width;
               const lift = layers.solid3d ? (HEIGHT_3D[t.category] ?? 1) * scale * 0.62 : 0;

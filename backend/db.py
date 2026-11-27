@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS samples (
   features TEXT NOT NULL, points TEXT NOT NULL, notes TEXT, source TEXT);
 """
 DET_COLS = ["id", "ts", "track_id", "category", "method", "confidence", "model_version",
-            "distance", "angle", "x", "y", "speed", "length", "n_points", "risk"]
+            "distance", "angle", "x", "y", "speed", "length", "n_points", "risk", "range_fused"]
 
 
 class _Result:
@@ -43,6 +43,10 @@ class DB:
             self.con.execute("ALTER TABLE samples ADD COLUMN session REAL")
         except sqlite3.OperationalError:
             pass
+        try:   # added later: TF-Luna-confirmed distance of the object (NULL when no beam crossed it)
+            self.con.execute("ALTER TABLE detections ADD COLUMN range_fused REAL")
+        except sqlite3.OperationalError:
+            pass
 
     def _q(self, sql, args=()):
         """Run one statement and fetch its rows INSIDE the lock: the connection is shared by several threads, and
@@ -54,7 +58,7 @@ class DB:
             return _Result(rows, cur.lastrowid)
 
     def add_detection(self, d: dict):
-        self._q(f"INSERT INTO detections ({','.join(DET_COLS[1:])}) VALUES ({','.join('?' * 14)})",
+        self._q(f"INSERT INTO detections ({','.join(DET_COLS[1:])}) VALUES ({','.join('?' * (len(DET_COLS) - 1))})",
                 [d.get(k) for k in DET_COLS[1:]])
 
     def detections(self, since=None, until=None, category=None, method=None, track_id=None,
