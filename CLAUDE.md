@@ -2,7 +2,7 @@
 
 ## Every change must reach the desktop app
 The user runs the INSTALLED Electron app from the desktop/Start-menu icon "PROJECT B.A.N.T.A.Y."
-(`%LOCALAPPDATA%\Programs\project-bantay\PROJECT BANTAY.exe`). Electron (`desktop/`) starts the bundled Python server
+(`%LOCALAPPDATA%\Programs\PROJECT BANTAY\PROJECT BANTAY.exe`). Electron (`desktop/`) starts the bundled Python server
 (`bantay_server.py`, PyInstaller). The install is a snapshot: code changes do nothing until rebuilt and reinstalled.
 After ANY change to `backend/`, `frontend/src/`, `bantay_server.py`, `desktop/` or dependencies:
 
