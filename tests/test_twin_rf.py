@@ -117,3 +117,19 @@ def test_ml_job_trains_and_activates(tmp_path, monkeypatch):
     assert "error" not in j["results"]["rf"] and j["best"] in ("rf", "nn")
     assert e.cfg.get()["classifier"] == ("ml" if j["best"] == "rf" else "nn")
     assert e.status()["twin_dataset"]["generator"] == tw.GENERATOR
+
+
+def test_workbook_sizes_and_standing_person():
+    import numpy as np
+    import backend.dataset as ds
+    import backend.twin as tw
+    assert ds.category("Pedestrian (person on foot)") == "pedestrian" and ds.category("habal_habal") == "motorcycle"
+    sz = ds.sizes()
+    assert "bicycle" in sz and "car" in sz and "bus" in [r[0] for r in sz["car"]]   # every non-two-wheeler is a car
+    legs = [p for p in tw.model("pedestrian", size=(0.48, 0.84)) if p["z"][0] == 0.0]
+    assert max(abs(v) for p in legs for v in p["y"]) == 0.16 * 2          # twice the built-in person's width
+    cfg = dict(tw.DEFAULTS, angle_offset_deg=0.0, mirror=True)
+    rng = np.random.default_rng(3)
+    bg = tw.warm_background(cfg)
+    got = [tw.simulate_pass("pedestrian", 0.6, rng, cfg, bg) for _ in range(6)]
+    assert sum(map(bool, got)) >= 3                                                                  # terminates, terminates; most are seen (far/dark ones are not)

@@ -54,7 +54,7 @@ It is written so another assistant can continue the work without the original ch
 ### Stack
 - **Backend:** Python 3.12, FastAPI, Uvicorn, pyserial, NumPy, SciPy, scikit-learn, SQLite, and optional PyTorch (CPU).
 - **Frontend:** React + TypeScript (Vite), Canvas 2D, plain CSS. No Tailwind, Three.js or chart library.
-- **Desktop app:** pywebview (Windows WebView2) packaged with PyInstaller, producing `app\BANTAY LiDAR\BANTAY LiDAR.exe`.
+- **Desktop app:** Electron (`desktop/`) around the Python server (`bantay_server.py`, PyInstaller), shipped as an NSIS installer in `app\installer\`.
   A **desktop and Start-menu icon** opens it in its own window, with no browser and no console.
 - Fully **offline**: it binds to 127.0.0.1:8765, and the fonts are bundled.
 
@@ -139,8 +139,8 @@ serial thread (parse + verify packets, assemble revolutions, auto-reconnect)
 | `backend/db.py` | SQLite: detections, samples (with session for object grouping) |
 | `backend/config.py` | all tunables, saved to `config.json` |
 | `frontend/src/` | `App.tsx` (shell, boot), `ScanCanvas.tsx`, `views/`, `Workflow.tsx`, `ReplayBar.tsx`, `styles.css` |
-| `bantay_app.py` | desktop-window entry point (pywebview) |
-| `build_app.ps1` | rebuilds the frontend and the exe |
+| `bantay_server.py` / `desktop/` | headless server started by the Electron desktop shell |
+| `build_app.ps1` | builds the frontend, server and Windows installer |
 | `run.py` / `start.bat` | browser / developer mode |
 | `tests/` | 21 pytest tests (protocol, pipeline, background, ML, replay, follow, unplug) |
 | `docs/HARDWARE.md` | protocol sources, bench checklist, audit findings |

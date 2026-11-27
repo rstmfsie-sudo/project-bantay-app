@@ -8,3 +8,4 @@ build/
 app/
 *.spec
 *.tsbuildinfo
+desktop/node_modules/

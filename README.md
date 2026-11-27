@@ -3,14 +3,19 @@
 A local, offline 360° roadside monitoring and object classification workstation for the
 **YDLIDAR T-mini Plus** (2D single-plane lidar), built for the Project B.A.N.T.A.Y. research prototype.
 
-## Desktop app
+## Install on a Windows laptop
 
-Double-click **PROJECT B.A.N.T.A.Y.** on the desktop or in the Start menu. It opens in its own frameless window,
-with no browser or console. Closing the window stops the lidar motor and exits.
+1. Download `PROJECT-BANTAY-Setup-<version>.exe` from the [Releases](https://github.com/rstmfsie-sudo/project-bantay-app/releases) page.
+2. Run it. It installs for the current user (no admin rights). The installer is not code-signed, so Windows
+   SmartScreen may warn: choose **More info → Run anyway**.
+3. Double-click **PROJECT B.A.N.T.A.Y.** on the desktop or in the Start menu.
 
-- App: `app\PROJECT BANTAY\PROJECT BANTAY.exe` (keep the whole folder together)
-- Your data (database, recordings, models, settings, log): `%LOCALAPPDATA%\BANTAY LiDAR`
-- Rebuild after code changes: `powershell -ExecutionPolicy Bypass -File build_app.ps1`
+The app opens in its own frameless window. Closing the window stops the lidar motor and exits.
+Plug the YDLIDAR in before or after starting; it is found automatically (Windows installs the CP2102 driver).
+
+- Your data (database, recordings, models, settings, log): `%LOCALAPPDATA%\BANTAY LiDAR` (kept on uninstall/upgrade)
+- Build the installer: `powershell -ExecutionPolicy Bypass -File build_app.ps1` → `app\installer\`.
+  It is an Electron shell (`desktop/`) around the Python server (`bantay_server.py`, PyInstaller).
 
 ## Run from source (developer / browser mode)
 

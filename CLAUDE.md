@@ -1,14 +1,18 @@
 # PROJECT B.A.N.T.A.Y.: project rules
 
 ## Every change must reach the desktop app
-The user runs the app from the desktop/Start-menu icon "PROJECT B.A.N.T.A.Y.", which opens the packaged
-`app\PROJECT BANTAY\PROJECT BANTAY.exe`. That exe is a snapshot: code changes do nothing for the user until it is rebuilt.
-After ANY change to `backend/`, `frontend/src/`, `bantay_app.py` or dependencies:
+The user runs the INSTALLED Electron app from the desktop/Start-menu icon "PROJECT B.A.N.T.A.Y."
+(`%LOCALAPPDATA%\Programs\project-bantay\PROJECT BANTAY.exe`). Electron (`desktop/`) starts the bundled Python server
+(`bantay_server.py`, PyInstaller). The install is a snapshot: code changes do nothing until rebuilt and reinstalled.
+After ANY change to `backend/`, `frontend/src/`, `bantay_server.py`, `desktop/` or dependencies:
 
 1. `.venv\Scripts\python -m pytest tests`: all must pass.
-2. Close the running app (it holds COM6 and port 8765).
-3. `powershell -ExecutionPolicy Bypass -File build_app.ps1` (rebuilds the frontend + exe, several minutes).
-4. Launch the exe and check `http://127.0.0.1:8765/api/status` shows the lidar scanning.
+2. Close the running app (it holds COM6 and port 8765; also stop any `bantay-server.exe`).
+3. `powershell -ExecutionPolicy Bypass -File build_app.ps1` (frontend + server + installer, 10+ minutes).
+4. Install it: `& "app\installer\PROJECT-BANTAY-Setup-<version>.exe" /S`.
+5. Launch from the desktop icon and check `http://127.0.0.1:8765/api/status` shows the lidar scanning.
+For a public release, bump `desktop/package.json` version and attach the installer to a GitHub Release
+(it is too big for git).
 
 Only then report the change as done.
 

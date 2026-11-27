@@ -21,6 +21,7 @@ import time
 import numpy as np
 
 from .config import DATA, DEFAULTS
+from . import dataset
 from .processing import Background, process
 from .tracking import Tracker
 
@@ -40,11 +41,20 @@ def wheel(xc, yc, zc, r, width, rim):
     return {"type": "wheel", "c": [xc, yc, zc], "r": r, "w": width, "rim": rim}
 
 
-def model(kind: str, rng=None, phase: float = 0.0) -> list[dict]:
-    """3D primitives for one object. `rng` varies the size; `phase` animates walking/pedalling legs."""
+def pick_size(kind: str, rng):
+    """(length, width) of a random workbook row of this category (backend/dataset.py), or None -> built-in size."""
+    rows = dataset.sizes().get(kind)
+    return None if not rows else rows[int(rng.integers(len(rows)))][1:]
+
+
+def model(kind: str, rng=None, phase: float = 0.0, size=None) -> list[dict]:
+    """3D primitives for one object. `rng` varies the size; `phase` animates walking/pedalling legs;
+    `size` = (length, width) from the workbook replaces the built-in typical size."""
     s = 1.0 if rng is None else rng.uniform(0.9, 1.1)
+    if size and kind in ("motorcycle", "bicycle"):
+        s *= size[0] / (2.0 if kind == "motorcycle" else 1.8)       # built-in models are ~2.0 / ~1.8 m long
     if kind == "car":
-        L, W = 4.4 * s, 1.8 * s
+        L, W = (size or (4.4, 1.8))[0] * s, (size or (4.4, 1.8))[1] * s
         return [box(-L / 2, L / 2, -W / 2, W / 2, 0.30, 1.00),
                 box(-L / 2 + 1.0, L / 2 - 1.2, -W / 2 + 0.1, W / 2 - 0.1, 1.00, 1.45),
                 *[wheel(x, y, 0.32, 0.32, 0.2, 0.32) for x in (-1.4 * s, 1.4 * s) for y in (-W / 2 + 0.1, W / 2 - 0.1)]]
@@ -63,8 +73,10 @@ def model(kind: str, rng=None, phase: float = 0.0) -> list[dict]:
                 box(-0.20, 0.10, -0.20, 0.20, 0.85, 1.50)]            # rider torso
     if kind == "pedestrian":
         k = 0.15 * math.sin(phase)                                    # stride
-        return [box(-0.06 + k, 0.06 + k, 0.04, 0.16, 0.0, 0.85), box(-0.06 - k, 0.06 - k, -0.16, -0.04, 0.0, 0.85),
-                box(-0.12, 0.12, -0.21, 0.21, 0.85, 1.45)]
+        sx, sy = (size[0] / 0.24, size[1] / 0.42) if size else (1.0, 1.0)   # built-in person: 0.24 deep x 0.42 wide
+        return [box(sx * (-0.06 + k), sx * (0.06 + k), sy * 0.04, sy * 0.16, 0.0, 0.85),
+                box(sx * (-0.06 - k), sx * (0.06 - k), sy * -0.16, sy * -0.04, 0.0, 0.85),
+                box(sx * -0.12, sx * 0.12, sy * -0.21, sy * 0.21, 0.85, 1.45)]
     raise ValueError(kind)
 
 
@@ -130,7 +142,7 @@ def max_range(reflectivity):
     return 4.0 + (12.0 - 4.0) * (np.clip(reflectivity, 0.1, 0.8) - 0.1) / 0.7
 
 
-SPEEDS = {"car": (3, 14), "motorcycle": (3, 15), "bicycle": (2, 7), "pedestrian": (0.8, 1.8)}
+SPEEDS = {"car": (3, 14), "motorcycle": (3, 15), "bicycle": (2, 7), "pedestrian": (0.3, 1.8)}   # slow walkers too; standing people are added in simulate_pass
 
 
 class _Scan:   # minimal stand-in for ydlidar.Scan
@@ -155,17 +167,21 @@ def simulate_pass(kind, height, rng, cfg, warm_bg):
         lane = -2.0 - abs(lane)                                    # stay in front of the wall at y=-1.5
     direction = rng.choice([-1, 1])
     speed = rng.uniform(*SPEEDS[kind])
+    standing = kind == "pedestrian" and rng.random() < 0.25       # a person waiting by the road reads ~0 m/s
+    if standing:
+        speed = 0.0
     refl = rng.uniform(0.1, 0.8)
     obj_seed = int(rng.integers(1 << 30))                         # same size for every frame of this object
+    size = pick_size(kind, np.random.default_rng(obj_seed))
     static = static_scene(np.random.default_rng(0))
     bg = Background()
     bg.snaps, bg.ranges, bg.last_t = list(warm_bg.snaps), warm_bg.ranges.copy(), None
     tracker, samples = Tracker(), []
-    x0 = -9.0 * direction
+    x0 = rng.uniform(-6, 6) if kind == "pedestrian" else -9.0 * direction   # people are met mid-scene
     t, phase_rate = 1000.0, (2 * math.pi * speed / 1.4 if kind in ("pedestrian", "bicycle") else 0.0)
-    while abs(x0 + direction * speed * (t - 1000.0)) <= 9.0:
+    while abs(x0 + direction * speed * (t - 1000.0)) <= 9.0 and t - 1000.0 < 20.0:
         x = x0 + direction * speed * (t - 1000.0)
-        prims = model(kind, rng=np.random.default_rng(obj_seed), phase=phase_rate * (t - 1000.0))
+        prims = model(kind, rng=np.random.default_rng(obj_seed), phase=phase_rate * (t - 1000.0), size=size)
         segs = _edges(slice_at(prims, height), x, lane, 0.0 if direction > 0 else math.pi)
         segs_static = _edges(static, 0, 0, 0)
         reflect = [max_range(refl)] * len(segs) + [12.0] * len(segs_static)
@@ -211,7 +227,7 @@ def generate(height: float, per_class: int, seed=0, progress=None):
 
 # ---------------------------------------------------------------- the saved synthetic dataset
 DATASET_FILE = DATA / "datasets" / "twin_dataset.joblib"
-GENERATOR = "bantay-twin-1"     # bump when the simulator changes, so old datasets are regenerated
+GENERATOR = "bantay-twin-2"     # bump when the simulator changes, so old datasets are regenerated
 
 
 def build_dataset(height: float, per_class: int, progress=None, seed=0) -> dict:
@@ -221,7 +237,8 @@ def build_dataset(height: float, per_class: int, progress=None, seed=0) -> dict:
     y_arr, g_arr = np.asarray(y), np.asarray(g)
     meta = {"version": time.strftime("twinset-%Y%m%d-%H%M%S"), "generator": GENERATOR, "seed": seed,
             "mount_height_m": height, "objects_requested_per_class": per_class, "created": time.time(),
-            "classes": CLASSES, "samples": {c: int((y_arr == c).sum()) for c in CLASSES},
+            "classes": CLASSES, "size_source": {k: [r[0] for r in v] for k, v in dataset.sizes().items()},
+            "samples": {c: int((y_arr == c).sum()) for c in CLASSES},
             "objects": {c: len(set(g_arr[y_arr == c])) for c in CLASSES},
             "note": "SIMULATED scans from the digital twin. Never mixed into the real dataset."}
     DATASET_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -297,6 +314,7 @@ class SimulationThread(threading.Thread):
         self.objects.append({"kind": kind, "lane": lane, "dir": direction, "x": -10.0 * direction,
                              "speed": self.rng.uniform(*SPEEDS[kind]) * (0.6 if kind != "pedestrian" else 1.0),
                              "refl": self.rng.uniform(0.2, 0.8), "seed": int(self.rng.integers(1 << 30)), "t0": now})
+        self.objects[-1]["size"] = pick_size(kind, self.rng)
         self.next_spawn = now + self.rng.uniform(1.5, 5.0)
 
     def _simulate_tfluna(self, segs, reflect, now):
@@ -329,7 +347,7 @@ class SimulationThread(threading.Thread):
             for o in self.objects:
                 o["x"] += o["dir"] * o["speed"] / SCAN_HZ
                 prims = model(o["kind"], rng=np.random.default_rng(o["seed"]),
-                              phase=2 * math.pi * o["speed"] / 1.4 * (now - o["t0"]))
+                              phase=2 * math.pi * o["speed"] / 1.4 * (now - o["t0"]), size=o["size"])
                 e = _edges(slice_at(prims, self.engine.cfg.get()["mount_height_m"]), o["x"], o["lane"],
                            0.0 if o["dir"] > 0 else math.pi)
                 segs += e

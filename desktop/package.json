@@ -1,0 +1,38 @@
+{
+  "name": "project-bantay",
+  "productName": "PROJECT B.A.N.T.A.Y.",
+  "version": "1.0.0",
+  "description": "Roadside 360-degree LiDAR monitor",
+  "author": "rstmfsie-sudo",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "ph.bantay.lidar",
+    "executableName": "PROJECT BANTAY",
+    "icon": "../bantay.ico",
+    "directories": { "output": "../app/installer" },
+    "files": ["main.js", "preload.js"],
+    "extraResources": [{ "from": "../app/bantay-server", "to": "bantay-server" }],
+    "win": { "target": "nsis", "icon": "../bantay.ico" },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "PROJECT B.A.N.T.A.Y.",
+      "installerIcon": "../bantay.ico",
+      "uninstallerIcon": "../bantay.ico",
+      "artifactName": "PROJECT-BANTAY-Setup-${version}.exe"
+    }
+  }
+}
