@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, RF, setSource, Track, TwinMeta, useLive, useToast } from "../api";
+import { api, CAT_COLOR, CATEGORIES, Config, fmt, lidarState, METHOD_LABEL, MLMeta, POS_NAME, RF, setSource, Track, TFLSensor, TwinMeta, useLive, useToast } from "../api";
 import type { ViewProps } from "../App";
 import Iso3D, { Beam, Prim, roundedRect } from "../Iso3D";
 import { tfLuna } from "../sensors3d";
@@ -15,10 +15,11 @@ const TAGLINE: Record<string, string> = {
   "Dataset Manager": "real examples you've taught it",
   "Digital Twin": "a pretend road, so it can practise",
   "Machine Learning": "turning your examples into a classifier",
+  Vehicle: "what's around your ride, on every side",
   Hardware: "the sensors, and how they're connected",
   Settings: "make it fit your roadside",
 };
-function Header({ title, sub, children }: { title: string; sub?: string; children?: React.ReactNode }) {
+export function Header({ title, sub, children }: { title: string; sub?: string; children?: React.ReactNode }) {
   return (
     <div className="page-h">
       <div>
@@ -30,7 +31,7 @@ function Header({ title, sub, children }: { title: string; sub?: string; childre
     </div>
   );
 }
-function Stat({ k, v, s, dot, tone }: { k: string; v: React.ReactNode; s?: React.ReactNode; dot?: string; tone?: string }) {
+export function Stat({ k, v, s, dot, tone }: { k: string; v: React.ReactNode; s?: React.ReactNode; dot?: string; tone?: string }) {
   return <div className={`card stat ${tone ? `c-${tone}` : ""}`}><div className="k row" style={{ gap: 7 }}>{dot !== undefined && <span className={`dot ${dot}`} />}{k}</div><div className="v">{v}</div>{s && <div className="s">{s}</div>}</div>;
 }
 function useFetch<T>(path: string | null, deps: unknown[] = []) {
@@ -49,26 +50,26 @@ const healthBits = ["Sensor", "Encoder", "Wireless power", "Laser feedback (PD)"
 /** 3D model of the real sensors (metres): three upright TF-Luna modules around the YDLIDAR T-mini Plus.
  * Each TF-Luna faces its beam; beams show LIVE readings. The T-mini Plus is a simplified look-alike. */
 export function SensorRig({ rf, height = 240 }: { rf: RF | null; height?: number }) {
-  const beamsIn = rf?.beams ?? ([{ side: "L", angle: 20, m: null }, { side: "C", angle: 0, m: null }, { side: "R", angle: -20, m: null }] as RF["beams"]);
-  const front = beamsIn.find((b) => b.side === "C")?.angle ?? 0;
-  const PLATE_Z = 0.02, TOP = PLATE_Z + 0.005, BAR_X = 0.05;   // TF-Lunas sit in a row along the front edge
+  const sensorsIn: Pick<TFLSensor, "pos" | "yaw_vehicle" | "m">[] = rf?.sensors ??
+    [{ pos: "L", yaw_vehicle: 90, m: null }, { pos: "R", yaw_vehicle: -90, m: null }, { pos: "B", yaw_vehicle: 180, m: null }];
+  const PLATE_Z = 0.02, TOP = PLATE_Z + 0.005, R = 0.062;   // TF-Lunas around the plate, facing their mounting direction
   const prims: Prim[] = [
     { type: "box", x: [-0.01, 0.01], y: [-0.01, 0.01], z: [0, PLATE_Z], color: "#4a4540", order: -10 },            // mount stub
-    { type: "prism", c: [0.012, 0, PLATE_Z + 0.0025], yaw: 0, depth: 0.1, outline: roundedRect(0.12, 0.005, 0.002), color: "#3a3531", order: -9 }, // plate
-    { type: "box", x: [-0.028, 0.028], y: [-0.024, 0.024], z: [TOP, TOP + 0.024], color: "#232120" },             // T-mini Plus body
+    { type: "prism", c: [0, 0, PLATE_Z + 0.0025], yaw: 0, depth: 0.15, outline: roundedRect(0.15, 0.005, 0.002), color: "#3a3531", order: -9 }, // plate
+    { type: "box", x: [-0.026, 0.026], y: [-0.022, 0.022], z: [TOP, TOP + 0.024], color: "#232120" },             // T-mini Plus body
     { type: "cyl", c: [0, 0, TOP + 0.024], r: 0.022, h: 0.016, color: "#151414" },                                 // rotating head
     { type: "lens", c: [0.022, 0, TOP + 0.032], r: 0.005, yaw: 0, color: "#1e2733" },                              // head window
   ];
   const beams: Beam[] = [];
-  for (const b of beamsIn) {
-    const rel = b.angle - front, t = (rel * Math.PI) / 180;
+  for (const b of sensorsIn) {
+    const rel = b.yaw_vehicle, t = (rel * Math.PI) / 180;    // vehicle frame: 0 = forward, 90 = left
     const zc = TOP + 0.006 + 0.0175;                         // housing centre height (ears clear the plate)
-    const py = b.side === "L" ? 0.032 : b.side === "R" ? -0.032 : 0;   // left / centre / right along the bar
-    prims.push(...tfLuna([BAR_X, py, zc], rel, BEAM_COLOR[b.side]));
-    const fx = BAR_X + 0.0068 * Math.cos(t), fy = py + 0.0068 * Math.sin(t);
+    const px = R * Math.cos(t), py = R * Math.sin(t);
+    prims.push(...tfLuna([px, py, zc], rel, BEAM_COLOR[b.pos]));
+    const fx = px + 0.0068 * Math.cos(t), fy = py + 0.0068 * Math.sin(t);
     const vis = b.m != null ? 0.04 + 0.012 * Math.min(b.m, 4) : 0.035;   // drawn short so the sensors stay readable
     beams.push({ from: [fx, fy, zc], angle: rel, length: vis, live: b.m != null,
-      label: `${b.side === "L" ? "Left" : b.side === "C" ? "Centre" : "Right"}${b.m != null ? ` · ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.side] });
+      label: `${POS_NAME[b.pos]}${b.m != null ? ` · ${b.m.toFixed(2)} m` : ""}`, color: BEAM_COLOR[b.pos] });
   }
   return <Iso3D prims={prims} beams={beams} height={height} yaw={-55} />;
 }
@@ -82,7 +83,7 @@ export function TfLunaCloseup({ height = 220 }: { height?: number }) {
 export function Overview({ go }: ViewProps) {
   const { frameRef, rfRef, frame, status: s, rf, alert } = useLive();
   const st = lidarState(s);
-  const beam = (side: "L" | "C" | "R") => rf?.beams.find((b) => b.side === side)?.m;
+  const beam = (pos: "L" | "R" | "B") => rf?.sensors.find((b) => b.pos === pos)?.m;
   return (
     <>
       <Header title="Overview" />
@@ -112,9 +113,9 @@ export function Overview({ go }: ViewProps) {
           <h3>Your sensors</h3>
           <SensorRig rf={rf} height={210} />
           <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 6 }}>
-            {(["L", "C", "R"] as const).map((b) => (
+            {(["L", "R", "B"] as const).map((b) => (
               <div key={b} className="mono" style={{ fontSize: 12 }}>
-                <span className="beam-chip" style={{ background: BEAM_COLOR[b] }} />{b === "L" ? "Left" : b === "C" ? "Centre" : "Right"}
+                <span className="beam-chip" style={{ background: BEAM_COLOR[b] }} />{POS_NAME[b]}
                 <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font)" }}>{beam(b) != null ? `${beam(b)!.toFixed(2)} m` : "—"}</div>
               </div>
             ))}
@@ -532,23 +533,28 @@ export function Hardware() {
             <SensorRig rf={rf} height={210} />
             <div><TfLunaCloseup height={190} /><div className="faint" style={{ fontSize: 11, textAlign: "center" }}>TF-Luna · 35 × 21 × 13.5 mm</div></div>
           </div>
-          <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 8, margin: "4px 0 12px" }}>
-            {rf?.beams.map((b) => (
-              <div key={b.side} className="mono" style={{ fontSize: 12 }}>
-                <span className="beam-chip" style={{ background: BEAM_COLOR[b.side] }} />{b.side === "L" ? "Left" : b.side === "C" ? "Centre" : "Right"}
-                <div style={{ fontSize: 17, fontWeight: 700, fontFamily: "var(--font)" }}>{b.m != null ? `${b.m.toFixed(2)} m` : "—"}</div>
-                <div className="faint">{b.strength != null ? `signal ${b.strength}` : "no reading"}</div>
-              </div>))}
-          </div>
-          <div className="muted" style={{ fontSize: 12 }}>{s?.rangefinders.message}</div>
-          <details style={{ marginTop: 10 }}><summary className="muted" style={{ cursor: "pointer" }}>Wiring (TF-Luna, UART mode)</summary>
+          <table className="t" style={{ margin: "4px 0 10px" }}>
+            <thead><tr><th>Sensor</th><th>Pico pin</th><th>Status</th><th>Distance</th><th>Signal</th><th>Frames ok / bad</th></tr></thead>
+            <tbody>{(rf?.sensors ?? []).map((b) => (
+              <tr key={b.pos}><td><span className="beam-chip" style={{ background: BEAM_COLOR[b.pos] }} />{b.name}</td>
+                <td className="mono">{b.pos === "L" ? "GP16/17 · UART0" : b.pos === "R" ? "GP8/9 · UART1" : "GP4/5 · I2C0"}</td>
+                <td><span className="chip"><span className={`dot ${b.status === "OK" ? "ok" : b.status === "SIMULATED" ? "warn" : b.fresh ? "warn" : ""}`} />{b.status}</span></td>
+                <td className="mono">{b.m != null ? `${b.m.toFixed(2)} m` : "—"}</td>
+                <td className="mono">{b.amp ?? "—"}</td>
+                <td className="mono">{b.frames_ok} / {b.frames_bad}</td></tr>))}</tbody>
+          </table>
+          <div className="muted" style={{ fontSize: 12 }}>{s?.rangefinders.message}{s?.rangefinders.firmware ? ` · firmware ${s.rangefinders.firmware}` : ""}
+            {s ? ` · ${s.rangefinders.lines_ok} lines ok, ${s.rangefinders.lines_bad} rejected` : ""}</div>
+          <details style={{ marginTop: 10 }}><summary className="muted" style={{ cursor: "pointer" }}>Wiring (confirmed on your Pico)</summary>
             <div className="kv" style={{ fontSize: 12, marginTop: 8 }}>
-              <span>Left LiDAR TX</span><span>GP1 (UART0)</span><span>Right LiDAR TX</span><span>GP5 (UART1)</span>
-              <span>Centre LiDAR TX</span><span>GP9 (PIO UART)</span><span>LiDAR power</span><span>5 V (VBUS) + GND</span>
-              <span>Warning LEDs</span><span>GP16 / GP17 / GP18</span><span>Buzzer</span><span>GP15 (quiet PWM)</span>
+              <span>Sensor 1 · Left (UART)</span><span>GP16 TX / GP17 RX · UART0</span>
+              <span>Sensor 2 · Right (UART)</span><span>GP8 TX / GP9 RX · UART1</span>
+              <span>Sensor 3 · Rear (I2C)</span><span>GP4 SDA / GP5 SCL · I2C0 · 0x10</span>
+              <span>TF-Luna power</span><span>5 V + GND</span>
+              <span>Warning LEDs</span><span>GP18 / GP19 / GP20</span><span>Buzzer</span><span>GP15 (quiet PWM)</span>
             </div>
-            <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>Firmware: firmware/pico_rangefinders/main.py. It hasn't run on your sensors yet, so check the model first.
-              Never wire a 5 V output (like an Arduino Nano TX) straight into a Pico pin.</div>
+            <div className="faint" style={{ fontSize: 11.5, marginTop: 8 }}>Each sensor has its own peripheral (UART0, UART1, I2C0), so there's no conflict.
+              Confirmed from the program that was on your Pico (backed up in firmware/pico_backup) and a live test where all three answered.</div>
           </details>
           <h3 style={{ marginTop: 16 }}>Detected serial ports</h3>
           {!s?.ports.length ? <div className="muted">No serial ports found.</div> : (
@@ -595,8 +601,15 @@ const FIELDS: { group: string; items: [string, string, number?][] }[] = [
   { group: "Clustering (DBSCAN)", items: [["dbscan_eps_m", "Neighbourhood ε (m)", 0.01], ["dbscan_min_samples", "Min samples", 1], ["min_cluster_points", "Min points per object", 1]] },
   { group: "Alerts", items: [["alert_sound", "Soft chime when something is close"], ["alert_volume", "Chime volume (0–1)", 0.05],
     ["alert_light", "Gentle glow around the window"], ["pico_alerts", "Send alerts to the Pico LEDs and buzzer"]] },
-  { group: "Range finders (Pico W)", items: [["rf_enabled", "Use the three range finders"], ["rf_bearing_L", "Left beam direction (°)", 1],
-    ["rf_bearing_C", "Centre beam direction (°)", 1], ["rf_bearing_R", "Right beam direction (°)", 1]] },
+  { group: "TF-Luna sensors (Pico W)", items: [["rf_enabled", "Use the three TF-Luna sensors"]] },
+  { group: "Vehicle geometry (uncalibrated until measured)", items: [["geometry_calibrated", "I measured these on the real vehicle"],
+    ["vehicle_length_m", "Vehicle length (m)", 0.05], ["vehicle_width_m", "Vehicle width (m)", 0.05],
+    ["lidar_mount_x_m", "YDLIDAR position forward (m)", 0.05], ["lidar_mount_y_m", "YDLIDAR position left (m)", 0.05],
+    ["tfl_L_x_m", "Left TF-Luna forward (m)", 0.05], ["tfl_L_y_m", "Left TF-Luna left (m)", 0.05], ["tfl_L_yaw_deg", "Left TF-Luna facing (°)", 1],
+    ["tfl_R_x_m", "Right TF-Luna forward (m)", 0.05], ["tfl_R_y_m", "Right TF-Luna left (m)", 0.05], ["tfl_R_yaw_deg", "Right TF-Luna facing (°)", 1],
+    ["tfl_B_x_m", "Rear TF-Luna forward (m)", 0.05], ["tfl_B_y_m", "Rear TF-Luna left (m)", 0.05], ["tfl_B_yaw_deg", "Rear TF-Luna facing (°)", 1]] },
+  { group: "Obstacle thresholds (research values, not certified)", items: [["prox_danger_m", "DANGER within (m)", 0.05],
+    ["prox_warning_m", "WARNING within (m)", 0.05], ["prox_caution_m", "CAUTION within (m)", 0.05]] },
   { group: "Tracking", items: [["track_max_speed_mps", "Fastest object to expect (m/s)", 1], ["track_gate_m", "Association gate (m)", 0.1], ["track_max_missed", "Drop after missed scans", 1], ["track_confirm_hits", "Confirm after hits", 1], ["speed_min_frames", "Show speed after updates", 1]] },
   { group: "Risk zones (from proposal)", items: [["zone_warning_m", "Warning zone (m)", 0.1], ["zone_caution_m", "Caution zone (m)", 0.1], ["ttc_warning_s", "TTC warning (s)", 0.1], ["ttc_caution_s", "TTC caution (s)", 0.1]] },
   { group: "Classification & storage", items: [["ml_min_confidence", "ML minimum confidence", 0.05], ["log_interval_s", "Log interval per track (s)", 0.5], ["retention_days", "Keep history (days)", 1], ["open_browser", "Open browser on start"],

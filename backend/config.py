@@ -52,12 +52,29 @@ DEFAULTS = {
     "zone_caution_m": 4.0,
     "ttc_warning_s": 1.5,
     "ttc_caution_s": 3.0,
-    # three single-beam range finders on the Pico W (bearing relative to the T-mini Plus front, CCW positive)
+    # three TF-Luna sensors on the Pico W (separate USB serial device from the LiDAR)
     "rf_enabled": True,
     "rf_port": "auto",
-    "rf_bearing_L": 20.0,
-    "rf_bearing_C": 0.0,
-    "rf_bearing_R": -20.0,
+    # VEHICLE GEOMETRY - vehicle frame: origin at the vehicle centre, x forward, y LEFT, yaw CCW from forward.
+    # All values below are UNCALIBRATED defaults for a typical motorcycle until measured on the real vehicle.
+    "geometry_calibrated": False,
+    "vehicle_length_m": 2.0,
+    "vehicle_width_m": 0.75,
+    "lidar_mount_x_m": 0.0,        # where the YDLIDAR sits on the vehicle
+    "lidar_mount_y_m": 0.0,
+    "tfl_L_x_m": 0.0,              # SENSOR 1 TF-Luna Left: on the left side, looking left
+    "tfl_L_y_m": 0.38,
+    "tfl_L_yaw_deg": 90.0,
+    "tfl_R_x_m": 0.0,              # SENSOR 2 TF-Luna Right: on the right side, looking right
+    "tfl_R_y_m": -0.38,
+    "tfl_R_yaw_deg": -90.0,
+    "tfl_B_x_m": -1.0,             # SENSOR 3 TF-Luna Rear: at the back, looking backwards
+    "tfl_B_y_m": 0.0,
+    "tfl_B_yaw_deg": 180.0,
+    # obstacle-monitoring thresholds: clearance from the vehicle body (m). Research values, NOT certified limits.
+    "prox_danger_m": 0.5,
+    "prox_warning_m": 1.0,
+    "prox_caution_m": 2.0,
     # alerts
     "alert_sound": True,           # soft chime in the app
     "alert_volume": 0.3,           # 0..1 (kept quiet: max gain is low)

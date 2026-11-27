@@ -21,8 +21,15 @@ Only then report the change as done.
 - YDLIDAR T-mini Plus, model code 151, firmware 1.1, CP2102 adapter on COM6, ~6 Hz.
 - Mounting rotation: `angle_offset_deg = 90` makes the sensor's front point up on screen (user-confirmed fix).
 
-- A Raspberry Pi Pico W is plugged in over USB, but it is not yet running `firmware/pico_rangefinders/main.py`.
-  The three range finders are **TF-Luna** (user-confirmed 2026-11-26). The firmware uses TF-Luna UART frames and has not been run on hardware yet.
+- A Raspberry Pi Pico W (COM5, MicroPython 1.29) holds firmware v2 from `firmware/pico_rangefinders/main.py` (uploaded 2026-11-27).
+  The three range finders are **TF-Luna**. The real wiring was confirmed from the program on the Pico:
+  - Left: UART0, GP16/17.
+  - Right: UART1, GP8/9.
+  - Rear: I2C0, GP4/5, address 0x10.
+  All three answered in a live test. Firmware v2 (compiles with mpy-cross) was uploaded on 2026-11-27; its live
+  output has not been observed yet. The original program is in firmware/pico_backup/. Do not change the wiring.
+- Vehicle frame: x forward, y left, origin at the vehicle centre. Mounting values are configurable and
+  UNCALIBRATED until measured.
 
 ## Honesty rules for the digital twin
 - Twin-trained models use method `ml_synthetic` ("ML (digital twin)"). Their accuracy is on simulated objects only.

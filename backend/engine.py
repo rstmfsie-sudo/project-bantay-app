@@ -18,6 +18,7 @@ from .db import DB
 from .pointnet import PointNetClassifier
 from .rangefinders import RangefinderLink
 from .twin import SimulationThread, TwinModel
+from . import vehicle
 from .processing import Background, process
 from .tracking import Tracker
 from .ydlidar import LidarDriver, Scan
@@ -53,7 +54,7 @@ class Engine:
         self.sim = SimulationThread(self)
         self.driver = LidarDriver(self.cfg.get, self.on_scan)
         self.rf = RangefinderLink(self.cfg.get)
-        self.alert = {"L": 0, "R": 0, "S": 0, "reasons": []}
+        self.alert = {"L": 0, "R": 0, "S": 0, "reasons": [], "monitor": None}
         self.alert_seq = 0
 
     def start(self):
@@ -176,44 +177,39 @@ class Engine:
             self._counted = dict(list(self._counted.items())[-5000:])   # bound memory on long runs
 
     # ------------------------------------------------------------ alerts
-    LEVEL = {"CLEAR": 0, "CAUTION": 1, "WARNING": 2}
+    TRACK_LEVEL = {"CLEAR": 0, "CAUTION": 1, "WARNING": 2}   # time-to-collision risk of tracked objects
 
-    def compute_alert(self, cfg, frame, rf_readings, now):
-        """Left / right / overall levels from tracked objects (risk) and the three range-finder beams (zones)."""
-        L = R = 0
-        reasons = []
-        front = cfg["angle_offset_deg"]
+    def fresh_points(self, frame, now):
+        """LiDAR points only if the frame is fresh; stale scans never drive warnings."""
+        return frame["points"] if frame and now - frame.get("t_wall", 0) < 1.5 else None
+
+    def compute_alert(self, cfg, frame, tfl_readings, now):
+        """Vehicle obstacle monitoring (SAFE..DANGER per side, from the TF-Lunas and the LiDAR) merged with the
+        tracked objects' time-to-collision risk. Returns levels 0..3 for the left, right and overall indicators."""
+        mon = vehicle.monitor(cfg, self.fresh_points(frame, now), tfl_readings or {})
+        L, R = mon["sides"]["left"]["level"], mon["sides"]["right"]["level"]
+        S = mon["overall"]
+        reasons = [f"{s} {v['nearest_m']:.2f} m ({v['source']})" for s, v in mon["sides"].items() if v["level"]]
         if frame and now - frame.get("t_wall", 0) < 1.5:
             for t in frame.get("tracks", []):
-                lvl = self.LEVEL[t["risk"]]
+                lvl = self.TRACK_LEVEL[t["risk"]]
                 if not lvl:
                     continue
-                rel = (t["bearing"] - front + 180) % 360 - 180
-                if rel >= -20:
+                vx, vy = vehicle.to_vehicle(t["x"], t["y"], cfg)
+                side = vehicle.sector(vx, vy)
+                if side == "left":
                     L = max(L, lvl)
-                if rel <= 20:
+                elif side == "right":
                     R = max(R, lvl)
-                reasons.append(f"{t['category']} #{t['id']} at {t['range']:.1f} m")
-        for side, r in (rf_readings or {}).items():
-            m = r.get("m")
-            if m is None:
-                continue
-            lvl = 2 if m <= cfg["zone_warning_m"] else 1 if m <= cfg["zone_caution_m"] else 0
-            if lvl:
-                if side in ("L", "C"):
-                    L = max(L, lvl)
-                if side in ("R", "C"):
-                    R = max(R, lvl)
-                reasons.append(f"beam {side} at {m:.1f} m")
-        return {"L": L, "R": R, "S": max(L, R), "reasons": reasons[:4]}
+                S = max(S, lvl)
+                reasons.append(f"{t['category']} #{t['id']} closing, {side}")
+        return {"L": L, "R": R, "S": S, "reasons": reasons[:4], "monitor": mon}
 
     def _alert_loop(self):
         while True:
             time.sleep(0.1)
             cfg, now = self.cfg.get(), time.time()
-            rf = self.rf.status
-            fresh_rf = rf.readings if rf.last_t and now - rf.last_t < 1.0 else None
-            a = self.compute_alert(cfg, self.frame, fresh_rf, now)
+            a = self.compute_alert(cfg, self.frame, self.rf.readings(now), now)
             if (a["L"], a["R"], a["S"]) != (self.alert["L"], self.alert["R"], self.alert["S"]):
                 self.alert_seq += 1
             self.alert = a
@@ -221,13 +217,16 @@ class Engine:
                 self.rf.send_alert((a["L"], a["R"], a["S"]))
 
     def rf_frame(self):
-        """Live range-finder readings plus where each beam points on the plot (degrees, CCW from +x)."""
-        cfg, st = self.cfg.get(), self.rf.status
-        fresh = st.last_t is not None and time.time() - st.last_t < 1.0
-        return {"state": st.state, "beams": [
-            {"side": s, "angle": cfg["angle_offset_deg"] + cfg[f"rf_bearing_{s}"],
-             "m": st.readings[s]["m"] if fresh else None, "strength": st.readings[s]["strength"] if fresh else None}
-            for s in ("L", "C", "R")]}
+        """TF-Luna states with their mounting geometry (plot frame), the vehicle outline, and the monitor result."""
+        cfg, now = self.cfg.get(), time.time()
+        geo = vehicle.sensor_geometry(cfg)
+        sensors = [{**v, **geo[v["pos"]]} for v in self.rf.views(now)]
+        ox, oy = vehicle.to_plot(0.0, 0.0, cfg)
+        return {"state": self.rf.status.state, "sensors": sensors,
+                "vehicle": {"x": ox, "y": oy, "front_deg": cfg["angle_offset_deg"], "length": cfg["vehicle_length_m"],
+                            "width": cfg["vehicle_width_m"], "calibrated": cfg["geometry_calibrated"]},
+                "monitor": self.alert.get("monitor"),
+                "thresholds": {k: cfg[f"prox_{k}_m"] for k in ("danger", "warning", "caution")}}
 
     def unplugged_for(self, now=None) -> float | None:
         """Seconds since a lidar that WAS scanning stopped delivering, or None (never connected / replay / fine)."""
@@ -319,7 +318,7 @@ class Engine:
             "ml": {"available": self.ml.available, "meta": self.ml.meta, "active": cfg["classifier"] == "ml"},
             "twin": {"available": self.twin.available, "meta": self.twin.meta, "job": self.twin.job,
                      "active": cfg["classifier"] == "twin"},
-            "rangefinders": dict(self.rf.status.__dict__),
+            "rangefinders": {**self.rf.status.__dict__, "sensors": self.rf.views()},
             "alert": self.alert,
             "alert_prefs": {"sound": cfg["alert_sound"], "volume": cfg["alert_volume"], "light": cfg["alert_light"]},
             "nn": {"installed": self.nn.installed, "available": self.nn.available, "meta": self.nn.meta,

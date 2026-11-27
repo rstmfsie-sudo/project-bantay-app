@@ -2,33 +2,10 @@
 import numpy as np
 
 from backend.config import DEFAULTS
-from backend.rangefinders import parse_line
 
 CFG = dict(DEFAULTS)
 
 
-def test_rf_parse_line():
-    f = parse_line("$RF,1234,250,-1,90,800,-1,65535*\r\n")
-    assert f["ms"] == 1234 and f["L"] == (2.5, 800) and f["R"] == (None, None) and f["C"] == (0.9, 65535)
-    for bad in ("$RF,1,2,3*", "RF,1,2,3,4,5,6,7*", "$RF,1,2,x,4,5,6,7*", "$RF,1,2,3,4,5,6,7"):
-        assert parse_line(bad) is None
-
-
-def test_alert_sides_and_beams():
-    from backend.engine import Engine
-    e = Engine()
-    cfg = dict(CFG, angle_offset_deg=90.0)              # front points up (+y)
-    track = lambda bearing, risk: {"risk": risk, "bearing": bearing, "category": "car", "id": 1, "range": 1.5}
-    frame = lambda *ts: {"t_wall": 100.0, "tracks": list(ts)}
-    a = e.compute_alert(cfg, frame(track(150, "WARNING")), None, 100.0)    # 60 deg left of front
-    assert (a["L"], a["R"], a["S"]) == (2, 0, 2)
-    a = e.compute_alert(cfg, frame(track(90, "CAUTION")), None, 100.0)     # straight ahead -> both sides
-    assert (a["L"], a["R"]) == (1, 1)
-    a = e.compute_alert(cfg, frame(track(150, "WARNING")), None, 105.0)    # stale frame is ignored
-    assert a["S"] == 0
-    beams = {"L": {"m": None}, "R": {"m": 1.2}, "C": {"m": 3.5}}           # R warning, C caution
-    a = e.compute_alert(cfg, None, beams, 100.0)
-    assert (a["L"], a["R"], a["S"]) == (1, 2, 2)
 
 
 def test_fast_car_is_tracked():

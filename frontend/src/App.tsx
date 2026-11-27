@@ -3,6 +3,7 @@ import { api, fmt, LiveCtx, lidarState, NavCtx, Status, Toast, ToastCtx, useLive
 import { Analytics, DatasetManager, Detection, DigitalTwin, Hardware, History, MachineLearning, Overview, Settings, Tracking } from "./views/Views";
 import { useAlertSound } from "./alerts";
 import LiveScan from "./views/LiveScan";
+import VehicleView from "./views/VehicleView";
 
 const I = (d: string) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
@@ -10,6 +11,7 @@ const I = (d: string) => (
 const NAV = [
   { group: "Monitor", items: [
     { id: "overview", label: "Overview", icon: I("M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-3H4zM14 7h6V4h-6z") },
+    { id: "vehicle", label: "Vehicle", icon: I("M5 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0a2 2 0 1 0-4 0M7 17l3-7h4l3 7M10 10l-1-3h-2M14 10l2-3h2") },
     { id: "live", label: "Live Scan", icon: I("M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 12l6-6") },
     { id: "detection", label: "Object Detection", icon: I("M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M9 9h6v6H9z") },
     { id: "tracking", label: "Tracking", icon: I("M3 17c3-1 4-8 8-8s5 6 10 4M18 10l3 3-3 3") },
@@ -150,7 +152,7 @@ export default function App() {
   const glow = prefs?.light === false ? 0 : live.alert.S;
   const s = live.status;
   const page = ALL.find((n) => n.id === view) ?? ALL[0];
-  const V = { overview: Overview, live: LiveScan, detection: Detection, tracking: Tracking, analytics: Analytics,
+  const V = { overview: Overview, vehicle: VehicleView, live: LiveScan, detection: Detection, tracking: Tracking, analytics: Analytics,
     history: History, dataset: DatasetManager, twin: DigitalTwin, ml: MachineLearning, hardware: Hardware, settings: Settings }[page.id]!;
 
   return (

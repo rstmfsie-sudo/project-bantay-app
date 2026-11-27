@@ -38,7 +38,8 @@ export type Status = {
   closing_in: number | null;
   alert: Alert;
   alert_prefs: { sound: boolean; volume: number; light: boolean };
-  rangefinders: { state: string; port: string | null; message: string; rate_hz: number; frames_bad: number };
+  rangefinders: { state: string; port: string | null; message: string; rate_hz: number; firmware: string | null;
+    lines_ok: number; lines_bad: number; errors: string[]; last_t: number | null; connects: number; sensors: TFLSensor[] };
   twin?: { available: boolean; active: boolean; meta: TwinMeta | null; job: { running: boolean; progress: number; message: string } };
   following: { track_id: number; label: string; samples: number }[];
 };
@@ -50,8 +51,23 @@ export type MLMeta = {
   validated: boolean; trained_at: number; note: string;
 };
 export type Config = Record<string, number | string | boolean>;
-export type Alert = { L: number; R: number; S: number; reasons: string[] };
-export type RF = { state: string; beams: { side: "L" | "C" | "R"; angle: number; m: number | null; strength: number | null }[] };
+export type Alert = { L: number; R: number; S: number; reasons: string[]; monitor?: Monitor | null };
+/** One TF-Luna as the app sees it. `m` is only set while the reading is fresh AND valid. */
+export type TFLSensor = {
+  id: number; name: string; pos: "L" | "R" | "B"; status: string; fresh: boolean; m: number | null; amp: number | null;
+  age_s: number | null; last_ok_t: number | null; frames_ok: number; frames_bad: number; bytes: number; source: string;
+  x: number; y: number; angle: number; yaw_vehicle: number; mount_vehicle: [number, number];
+};
+export type SideState = { level: number; label: string; nearest_m: number | null; source: string | null; lidar_m: number | null; tfl_m: number | null };
+export type Monitor = { sides: Record<"front" | "left" | "right" | "rear", SideState>; overall: number; overall_label: string };
+export type RF = {
+  state: string; sensors: TFLSensor[]; monitor: Monitor | null;
+  vehicle: { x: number; y: number; front_deg: number; length: number; width: number; calibrated: boolean };
+  thresholds: { danger: number; warning: number; caution: number };
+};
+export const POS_NAME: Record<string, string> = { L: "Left", R: "Right", B: "Rear" };
+export const LEVEL_NAME = ["SAFE", "CAUTION", "WARNING", "DANGER"];
+export const LEVEL_COLOR = ["#8CC79A", "#E5B452", "#E58A52", "#D9644A"];
 export type TwinMeta = MLMeta & { mount_height_m: number; features: string[];
   sim_to_real: { accuracy: number; samples: number; confusion_matrix: number[][] } | null };
 

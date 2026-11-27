@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { CAT_COLOR, Frame, RF } from "./api";
+import { CAT_COLOR, Frame, LEVEL_COLOR, POS_NAME, RF } from "./api";
 
-export const BEAM_COLOR: Record<string, string> = { L: "#7EA6E0", C: "#8CC79A", R: "#C3A1EC" };
+/** TF-Luna colours: Left blue, Right purple, Rear green. */
+export const BEAM_COLOR: Record<string, string> = { L: "#7EA6E0", R: "#C3A1EC", B: "#8CC79A" };
 
 export type Layers = { rejected: boolean; filtered: boolean; clusters: boolean; tracks: boolean; labels: boolean; trails: boolean; solid3d: boolean; ego: boolean };
 export const DEFAULT_LAYERS: Layers = { rejected: false, filtered: true, clusters: true, tracks: true, labels: true, trails: true, solid3d: true, ego: true };
@@ -120,7 +121,8 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
       }
 
       const f = frameRef.current;
-      if (layers.ego) drawEgoBike(ctx, ox, oy, scale, f?.front_deg ?? 90, colors, !compact);
+      const veh = rfRef?.current?.vehicle;
+      if (layers.ego) drawEgoBike(ctx, veh ? sx(veh.x) : ox, veh ? sy(veh.y) : oy, scale, veh?.front_deg ?? f?.front_deg ?? 90, colors, !compact);
       if (f) {
         const ps = Math.max(1.6, Math.min(3, scale / 70));
         if (layers.rejected) {
@@ -190,20 +192,22 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
           }
         }
       }
-      // the three single-beam range finders on the Pico W
+      // the three TF-Lunas: ONE distance each, drawn as a ray from the sensor's mounting point (never a scan)
       const rf = rfRef?.current;
       if (rf && rf.state !== "disabled") {
-        for (const b of rf.beams) {
-          const t = (b.angle * Math.PI) / 180, col = BEAM_COLOR[b.side];
-          const len = (b.m ?? rangeMax) * scale;
-          ctx.strokeStyle = col; ctx.lineWidth = b.m != null ? 2 : 1;
-          ctx.globalAlpha = b.m != null ? 0.9 : 0.3; ctx.setLineDash(b.m != null ? [] : [3, 6]);
-          ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(ox + Math.cos(t) * len, oy - Math.sin(t) * len); ctx.stroke();
+        for (const b of rf.sensors) {
+          const t = (b.angle * Math.PI) / 180, col = BEAM_COLOR[b.pos];
+          const bx = sx(b.x), by = sy(b.y), len = (b.m ?? 8) * scale;   // no reading: dashed outline of its 8 m reach
+          ctx.strokeStyle = col; ctx.lineWidth = b.m != null ? 2.5 : 1;
+          ctx.globalAlpha = b.m != null ? 0.95 : 0.25; ctx.setLineDash(b.m != null ? [] : [3, 6]);
+          ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(bx + Math.cos(t) * len, by - Math.sin(t) * len); ctx.stroke();
           ctx.setLineDash([]); ctx.globalAlpha = 1;
+          ctx.fillStyle = col; ctx.fillRect(bx - 3, by - 3, 6, 6);                                  // the sensor itself
           if (b.m != null) {
-            const ex = ox + Math.cos(t) * len, ey = oy - Math.sin(t) * len;
-            ctx.fillStyle = col; ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fill();
-            if (!compact) { ctx.font = `600 11px ${css("--mono")}`; ctx.fillText(`${b.side} ${b.m.toFixed(2)} m`, ex + 7, ey - 7); }
+            const ex = bx + Math.cos(t) * len, ey = by - Math.sin(t) * len;
+            const lvl = rf.monitor?.sides[b.pos === "L" ? "left" : b.pos === "R" ? "right" : "rear"]?.level ?? 0;
+            ctx.fillStyle = LEVEL_COLOR[lvl]; ctx.beginPath(); ctx.arc(ex, ey, 5, 0, Math.PI * 2); ctx.fill();
+            if (!compact) { ctx.fillStyle = col; ctx.font = `600 11px ${css("--mono")}`; ctx.fillText(`${POS_NAME[b.pos]} ${b.m.toFixed(2)} m`, ex + 8, ey - 8); }
           }
         }
       }

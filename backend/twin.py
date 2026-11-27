@@ -297,6 +297,23 @@ def preview(height: float) -> dict:
     return {k: {"prims": model(k), "slice": slice_at(model(k), height)} for k in CLASSES}
 
 
+def ray_hit(ox, oy, deg, segments, reflect):
+    """Distance along one ray from (ox, oy) to the nearest segment, or None (single-beam range finder)."""
+    if not segments:
+        return None
+    d = np.array([math.cos(math.radians(deg)), math.sin(math.radians(deg))])
+    P = np.array([a for a, _ in segments]) - np.array([ox, oy]); E = np.array([b for _, b in segments]) - np.array([a for a, _ in segments])
+    den = d[0] * E[:, 1] - d[1] * E[:, 0]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = (P[:, 0] * E[:, 1] - P[:, 1] * E[:, 0]) / den
+        u = (P[:, 0] * d[1] - P[:, 1] * d[0]) / den
+    ok = (np.abs(den) > 1e-12) & (t > 0) & (u >= 0) & (u <= 1) & (t <= np.asarray(reflect))
+    return float(t[ok].min()) if ok.any() else None
+
+
+TFL_RANGE = (0.2, 8.0)     # Benewake TF-Luna product page: 0.2 ~ 8 m
+
+
 # ---------------------------------------------------------------- live simulation source
 class SimulationThread(threading.Thread):
     """Live pretend traffic for using the app without the LiDAR (source = "simulation").
@@ -323,6 +340,22 @@ class SimulationThread(threading.Thread):
                              "refl": self.rng.uniform(0.2, 0.8), "seed": int(self.rng.integers(1 << 30)), "t0": now})
         self.next_spawn = now + self.rng.uniform(1.5, 5.0)
 
+    def _simulate_tfluna(self, segs, reflect, now):
+        """The three TF-Luna beams through the same simulated scene, from their configured mounts."""
+        from .vehicle import sensor_geometry
+        cfg = self.engine.cfg.get()
+        off = cfg["angle_offset_deg"]
+        out = {}
+        for pos, g in sensor_geometry(cfg).items():
+            # plot frame -> this simulation's frame (the engine rotates scans by the mounting offset)
+            a = math.radians(-off)
+            sx, sy = g["x"] * math.cos(a) - g["y"] * math.sin(a), g["x"] * math.sin(a) + g["y"] * math.cos(a)
+            hit = ray_hit(sx, sy, g["angle"] - off, segs, reflect)
+            if hit is not None:
+                hit += float(self.rng.normal(0, 0.02))
+            out[pos] = hit if hit is not None and TFL_RANGE[0] <= hit <= TFL_RANGE[1] else None
+        self.engine.rf.inject_simulated(out, now)
+
     def run(self):
         n_rays = int(round(360 / STEP_DEG))
         while True:
@@ -343,7 +376,9 @@ class SimulationThread(threading.Thread):
                 segs += e
                 reflect += [max_range(o["refl"])] * len(e)
             self.objects = [o for o in self.objects if abs(o["x"]) <= 11.0]
-            a, d = raycast(segs + self.static, reflect + [12.0] * len(self.static), self.rng, n_rays)
+            all_segs, all_refl = segs + self.static, reflect + [12.0] * len(self.static)
+            a, d = raycast(all_segs, all_refl, self.rng, n_rays)
+            self._simulate_tfluna(all_segs, all_refl, now)
             scan = _Scan(now, a, d)
             scan.freq_hz = SCAN_HZ
             self.engine.on_scan(scan)

@@ -54,3 +54,51 @@ YDLidar-SDK `src/YDlidarDriver.cpp`, `core/common/ydlidar_protocol.h`, `doc/Data
 
 T-mini Plus: 4.8–5.2 V. Use a USB port or powered hub that can supply the motor start current. If scans stop with
 "No complete scan for 5 s", check power first.
+
+## Three TF-Luna sensors on the Pico W (vehicle monitoring)
+
+### Wiring: confirmed on the real Pico (2026-11-27)
+The researcher reported Left GP17, Right GP9, Rear GP4/GP5. On those numbers alone, GP5 and GP9 looked like a
+UART1 conflict (both are UART1 RX pins). Before uploading anything, the program already on the Pico was read
+back (saved in `firmware/pico_backup/main_before_v2_2026-11-27.py`). It shows the real configuration:
+
+| Sensor | Interface | Pins |
+|---|---|---|
+| 1 · TF-Luna Left | UART mode, **UART0** | GP16 TX → TF-Luna RX, TF-Luna TX → GP17 RX |
+| 2 · TF-Luna Right | UART mode, **UART1** | GP8 TX → TF-Luna RX, TF-Luna TX → GP9 RX |
+| 3 · TF-Luna Rear | **I2C mode**, **I2C0**, address 0x10 | GP4 SDA, GP5 SCL (TF-Luna pin 5 grounded) |
+
+Every sensor has its own peripheral, so there is **no pin or address conflict and no rewiring is needed**.
+
+**Live test with the old program (2026-11-27), 6 s:**
+- Sensor 1: 25/25 readings, 34 to 38 cm, amplitude about 430.
+- Sensor 2: 25/25 readings, 3.94 to 3.98 m, amplitude about 980.
+- Sensor 3 (I2C): 25/25 readings, 32 to 41 cm.
+
+The firmware also uses LEDs on GP18 / GP19 / GP20 and a buzzer on GP15.
+
+### TF-Luna facts
+- **Verified on the Benewake product page:** interfaces UART / I/O / I2C, range 0.2 to 8 m,
+  accuracy ±6 cm (0.2 to 3 m), 35 x 21.25 x 13.5 mm.
+- **From the Benewake user manual, not re-checked here because the PDF is behind a download form:**
+  - 115200 8N1;
+  - 9-byte frame `59 59 DistL DistH AmpL AmpH TempL TempH Checksum` (low byte of the sum of bytes 0..7), distance in cm;
+  - Amp < 100 or 0xFFFF means unreliable;
+  - pin 5 tied to GND selects I2C.
+- The firmware is defensive about these unverified details. It validates every checksum, and it reports
+  `BADFRAMES` if bytes arrive but no frame validates (wrong baud rate or format).
+
+### Pico to app protocol (firmware v2)
+- **Data lines:** `$TFL,<seq>,<ms>,<id>,<pos>,<dist_cm>,<amp>,<status>*HH`, about 20 Hz per sensor.
+  - Status is OK, WEAK, STALE, NODATA or BADFRAMES.
+  - The id must match its position (1 = L, 2 = R, 3 = B). The app rejects anything else.
+- **Other lines:** `$DIAG,...` once per second, and `$BOOT,...` at start and every 10 s.
+- **Checksum:** NMEA-style XOR of the characters between `$` and `*`.
+- **App to Pico:** `!A,<left>,<right>,<overall>`, levels 0 (safe) to 3 (danger), for the LEDs and buzzer.
+
+### Still to do on the real hardware
+1. Firmware v2 was uploaded to the Pico on 2026-11-27. The USB devices were then unplugged before its output
+   could be read. Plug back in: the Hardware page should show all three sensors `OK`.
+2. Check that every sensor reports `OK` with a sensible distance. Hold a card at a tape-measured distance.
+3. Measure the real mounting positions and directions. Enter them in Settings, under Vehicle geometry,
+   then tick "I measured these".
