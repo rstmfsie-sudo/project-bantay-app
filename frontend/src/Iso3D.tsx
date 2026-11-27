@@ -68,7 +68,7 @@ export default function Iso3D({ prims = [], slices = [], sliceZ, beams = [], hei
       ctx.clearRect(0, 0, w, h);
       const ca = Math.cos(a), sa = Math.sin(a);
       const rot = (x: number, y: number) => [x * ca - y * sa, x * sa + y * ca];
-      const proj0 = (x: number, y: number, z: number) => { const [u, v] = rot(x, y); return [(u - v) * 0.866, (u + v) * 0.5 - z]; };
+      const proj0 = (x: number, y: number, z: number) => { const [u, v] = rot(x, y); return [(v - u) * 0.866, (u + v) * 0.5 - z]; };   // right-handed: x to y turns counter-clockwise seen from above
 
       // fixed camera (live views) or fit everything (prims + beams) into the canvas
       const pts: number[][] = [];

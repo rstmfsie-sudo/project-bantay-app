@@ -13,6 +13,7 @@ export type Frame = {
   clusters: { id: number; xmin: number; ymin: number; xmax: number; ymax: number; cx: number; cy: number }[];
   tracks: Track[];
   replay?: ReplayState | null;
+  front_deg?: number;   // plot angle (deg, CCW from +x) of the sensor's front = your vehicle's nose
 };
 export type ReplayState = { file: string | null; pos: number; total: number; message: string;
   paused?: boolean; speed?: number; rec_t?: number | null; rec_t0?: number | null };

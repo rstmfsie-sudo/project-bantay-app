@@ -6,7 +6,7 @@ import TwinView from "../TwinView";
 
 const LAYER_NAMES: [keyof Layers, string][] = [
   ["rejected", "Rejected raw"], ["filtered", "Filtered points"], ["clusters", "Clusters"],
-  ["tracks", "Tracked objects"], ["solid3d", "3D objects"], ["labels", "Labels"], ["trails", "Trails"],
+  ["ego", "Your motorcycle"], ["tracks", "Tracked objects"], ["solid3d", "3D objects"], ["labels", "Labels"], ["trails", "Trails"],
 ];
 
 export default function LiveScan() {
@@ -38,7 +38,7 @@ export default function LiveScan() {
   return (
     <div className="live-layout">
       <div className={`scanwrap ${persp ? "persp" : ""}`}>
-        {view === "3d" ? <TwinView frameRef={frameRef} rangeMax={range} /> :
+        {view === "3d" ? <TwinView frameRef={frameRef} rangeMax={range} showEgo={layers.ego} /> :
         <ScanCanvas frameRef={frameRef} rfRef={rfRef} rangeMax={range} layers={layers} selected={sel} onSelect={onSelect} resetKey={reset} />}
         <div className="overlay" style={{ left: 14, top: 14 }}>
           <div className="seg">{[4, 8, 12].map((r) => (

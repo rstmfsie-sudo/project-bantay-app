@@ -152,7 +152,8 @@ class Engine:
         self.follow = {k: v for k, v in self.follow.items() if k in live}
         self.proc_ms = (time.perf_counter() - t0) * 1000 if self.proc_ms is None \
             else 0.9 * self.proc_ms + 0.1 * (time.perf_counter() - t0) * 1000
-        frame.update(t=scan.t, t_wall=time.time(), clusters=[{k: c[k] for k in ("id", "xmin", "ymin", "xmax", "ymax", "cx", "cy")}
+        frame.update(t=scan.t, t_wall=time.time(), front_deg=cfg["angle_offset_deg"],   # where the sensor's front points on the plot
+                     clusters=[{k: c[k] for k in ("id", "xmin", "ymin", "xmax", "ymax", "cx", "cy")}
                                          for c in clusters], tracks=tracks,
                      source="simulation" if sim else "replay" if replay else "serial",
                      replay=self.replay.state() if replay else None)

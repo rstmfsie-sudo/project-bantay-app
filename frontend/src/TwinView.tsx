@@ -23,16 +23,19 @@ function place(prims: Prim[], X: number, Y: number, yawDeg: number, color: strin
 /** Live Scan's 3D digital-twin view: tracked objects shown as the twin's 3D model of their detected type,
  * at their tracked position and heading, over the real scan points. Shapes are illustrations: the LiDAR
  * measures a flat slice, so only position, footprint, heading and type come from the sensor. */
-export default function TwinView({ frameRef, rangeMax }: { frameRef: React.MutableRefObject<Frame | null>; rangeMax: number }) {
+export default function TwinView({ frameRef, rangeMax, showEgo = true }: { frameRef: React.MutableRefObject<Frame | null>; rangeMax: number; showEgo?: boolean }) {
   const [models, setModels] = useState<Models | null>(null);
   useEffect(() => { api<Models>("/api/twin/preview?height_m=0.6").then(setModels).catch(() => setModels({})); }, []);
 
   const getScene = useCallback(() => {
     const f = frameRef.current;
-    const prims: Prim[] = [
-      { type: "cyl", c: [0, 0, 0], r: 0.14, h: 0.32, color: "#2a2826" },                  // the LiDAR on its mount
-      { type: "cyl", c: [0, 0, 0.32], r: 0.11, h: 0.08, color: "#C96F4A" },
-    ];
+    const front = f?.front_deg ?? 90;
+    const ego = showEgo ? models?.motorcycle?.prims : undefined;
+    const prims: Prim[] = ego
+      ? [...place(ego, 0, 0, front, "#E9DFCF"),                                            // your motorcycle, nose = sensor front
+         { type: "cyl", c: [0, 0, 0.86], r: 0.1, h: 0.08, color: "#C96F4A" }]               // the LiDAR riding on it
+      : [{ type: "cyl", c: [0, 0, 0], r: 0.14, h: 0.32, color: "#2a2826" },                // the LiDAR on its mount
+         { type: "cyl", c: [0, 0, 0.32], r: 0.11, h: 0.08, color: "#C96F4A" }];
     for (const t of f?.tracks ?? []) {
       const color = CAT_COLOR[t.category] ?? "#9A938B";
       const along = t.box[2] - t.box[0] >= t.box[3] - t.box[1] ? 0 : 90;            // footprint's long side
@@ -42,7 +45,7 @@ export default function TwinView({ frameRef, rangeMax }: { frameRef: React.Mutab
       else prims.push({ type: "box", x: [t.box[0], t.box[2]], y: [t.box[1], t.box[3]], z: [0, 1.0], color });
     }
     return { prims };
-  }, [frameRef, models]);
+  }, [frameRef, models, showEgo]);
 
   const ground = useCallback((ctx: CanvasRenderingContext2D, P: (x: number, y: number, z: number) => number[]) => {
     // distance rings on the road
@@ -67,6 +70,19 @@ export default function TwinView({ frameRef, rangeMax }: { frameRef: React.Mutab
   }, [frameRef, rangeMax]);
 
   const overlay = useCallback((ctx: CanvasRenderingContext2D, P: (x: number, y: number, z: number) => number[]) => {
+    if (showEgo) {   // FRONT / BACK / LEFT / RIGHT on the ground around your motorcycle
+      const front = frameRef.current?.front_deg ?? 90;
+      ctx.font = `700 11px ${css("--mono")}`; ctx.textAlign = "center";
+      for (const [txt, off, dist] of [["FRONT", 0, 1.9], ["BACK", 180, 2.1], ["LEFT", 90, 1.2], ["RIGHT", -90, 1.2]] as const) {
+        const a = ((front + off) * Math.PI) / 180;
+        const [x, y] = P(Math.cos(a) * dist, Math.sin(a) * dist, 0);
+        const tw = ctx.measureText(txt).width;
+        ctx.fillStyle = "rgba(20,19,18,.72)"; ctx.beginPath(); ctx.roundRect(x - tw / 2 - 6, y - 8, tw + 12, 17, 8); ctx.fill();
+        ctx.fillStyle = txt === "FRONT" ? css("--accent-hi") : "#E9DFCF";
+        ctx.fillText(txt, x, y + 4);
+      }
+      ctx.textAlign = "left";
+    }
     ctx.font = `600 11px ${css("--font")}`;
     const placed: [number, number, number][] = [];                       // [x, y, width] of labels already drawn
     for (const t of frameRef.current?.tracks ?? []) {
@@ -79,7 +95,7 @@ export default function TwinView({ frameRef, rangeMax }: { frameRef: React.Mutab
       ctx.fillStyle = css("--glass"); ctx.beginPath(); ctx.roundRect(x - w / 2 - 6, y - 14, w + 12, 18, 6); ctx.fill();
       ctx.fillStyle = css("--text"); ctx.fillText(label, x - w / 2, y);
     }
-  }, [frameRef]);
+  }, [frameRef, showEgo]);
 
   return <Iso3D getScene={getScene} ground={ground} overlay={overlay} extent={rangeMax * 1.2} spin={false} yaw={-40} interactive height="100%" />;
 }

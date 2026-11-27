@@ -3,8 +3,53 @@ import { CAT_COLOR, Frame, RF } from "./api";
 
 export const BEAM_COLOR: Record<string, string> = { L: "#7EA6E0", C: "#8CC79A", R: "#C3A1EC" };
 
-export type Layers = { rejected: boolean; filtered: boolean; clusters: boolean; tracks: boolean; labels: boolean; trails: boolean; solid3d: boolean };
-export const DEFAULT_LAYERS: Layers = { rejected: false, filtered: true, clusters: true, tracks: true, labels: true, trails: true, solid3d: true };
+export type Layers = { rejected: boolean; filtered: boolean; clusters: boolean; tracks: boolean; labels: boolean; trails: boolean; solid3d: boolean; ego: boolean };
+export const DEFAULT_LAYERS: Layers = { rejected: false, filtered: true, clusters: true, tracks: true, labels: true, trails: true, solid3d: true, ego: true };
+
+/** Your motorcycle, top-down, in metres (about 2.0 m long, 0.75 m across the mirrors), nose toward the sensor front. */
+export function drawEgoBike(ctx: CanvasRenderingContext2D, ox: number, oy: number, scale: number, frontDeg: number,
+  colors: { text: string; muted: string; faint: string; accent: string }, labels: boolean) {
+  const th = (frontDeg * Math.PI) / 180;
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.rotate(Math.PI / 2 - th);                       // local -y (up) now points along the sensor's front
+  ctx.scale(scale, scale);
+  const rr = (x: number, y: number, w: number, h: number, r: number) => {
+    ctx.beginPath(); ctx.moveTo(x - w / 2 + r, y - h / 2); ctx.arcTo(x + w / 2, y - h / 2, x + w / 2, y + h / 2, r);
+    ctx.arcTo(x + w / 2, y + h / 2, x - w / 2, y + h / 2, r); ctx.arcTo(x - w / 2, y + h / 2, x - w / 2, y - h / 2, r);
+    ctx.arcTo(x - w / 2, y - h / 2, x + w / 2, y - h / 2, r); ctx.closePath();
+  };
+  ctx.lineWidth = 1.5 / scale;
+  ctx.strokeStyle = colors.muted;
+  ctx.fillStyle = "rgba(20,19,18,.75)";
+  rr(0, 0.66, 0.15, 0.62, 0.07); ctx.fill(); ctx.stroke();       // rear tyre
+  rr(0, -0.7, 0.13, 0.58, 0.06); ctx.fill(); ctx.stroke();       // front tyre
+  ctx.fillStyle = "rgba(244,235,221,.16)";
+  rr(0, 0.08, 0.34, 1.0, 0.14); ctx.fill(); ctx.stroke();        // body + seat
+  ctx.beginPath(); ctx.ellipse(0, -0.28, 0.16, 0.22, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();   // tank
+  ctx.beginPath(); ctx.moveTo(-0.36, -0.52); ctx.lineTo(0.36, -0.52); ctx.lineWidth = 3 / scale; ctx.stroke();   // handlebar
+  ctx.fillStyle = colors.muted;
+  for (const x of [-0.37, 0.37]) { ctx.beginPath(); ctx.arc(x, -0.55, 0.045, 0, Math.PI * 2); ctx.fill(); }      // mirrors
+  ctx.fillStyle = colors.accent;
+  ctx.beginPath(); ctx.arc(0, -1.0, 0.06, 0, Math.PI * 2); ctx.fill();                                            // headlight
+  ctx.fillStyle = "#D9644A";
+  ctx.fillRect(-0.06, 0.97, 0.12, 0.04);                                                                          // tail light
+  ctx.restore();
+  if (!labels) return;
+  // FRONT / BACK / LEFT / RIGHT, kept upright and placed around the bike
+  ctx.font = `600 10.5px ${css("--mono")}`;
+  ctx.textAlign = "center";
+  const put = (txt: string, angDeg: number, distM: number, col: string) => {
+    const a = (angDeg * Math.PI) / 180;
+    ctx.fillStyle = col;
+    ctx.fillText(txt, ox + Math.cos(a) * distM * scale, oy - Math.sin(a) * distM * scale + 4);
+  };
+  put("FRONT", frontDeg, 1.45, colors.accent);
+  put("BACK", frontDeg + 180, 1.6, colors.muted);
+  put("LEFT", frontDeg + 90, 0.95, colors.muted);
+  put("RIGHT", frontDeg - 90, 0.95, colors.muted);
+  ctx.textAlign = "left";
+}
 /** Typical heights (m) used only to DRAW 3D blocks: the 2D LiDAR does not measure height. */
 const HEIGHT_3D: Record<string, number> = { car: 1.45, motorcycle: 1.2, bicycle: 1.1, pedestrian: 1.7, unknown: 1.0 };
 
@@ -75,6 +120,7 @@ export default function ScanCanvas({ frameRef, rfRef, rangeMax, layers, selected
       }
 
       const f = frameRef.current;
+      if (layers.ego) drawEgoBike(ctx, ox, oy, scale, f?.front_deg ?? 90, colors, !compact);
       if (f) {
         const ps = Math.max(1.6, Math.min(3, scale / 70));
         if (layers.rejected) {
